@@ -39,6 +39,7 @@ XMLProtocol = subclass asyncio.streams.FlowControlMixin asyncio.Protocol where
   #: A XML stanza-based protocol. Calls a function for every child of a root node.
   #:
   #: loop :: EventLoop
+  #: root :: str
   #:
   __init__ = handle: None root: 'stream' loop: None ~>
     handle => @handle = asyncio.coroutine handle
@@ -60,14 +61,26 @@ XMLProtocol = subclass asyncio.streams.FlowControlMixin asyncio.Protocol where
       ev == 'start' => @level += 1
       ev == 'end'   =>
         @level -= 1
-        @level == 1 => asyncio.async loop: @loop $ @handle node @writer
+        @level == 1 => asyncio.async loop: @loop $ @handle node
     (super XMLProtocol self).data_received data
+
+  #: An alias to `writer.send`.
+  #:
+  #: send :: typeof XMLWriter.send
+  #:
+  send = node ~> @writer.send node
+
+  #: An alias to `writer.close`.
+  #:
+  #: close :: typeof XMLWriter.close
+  #:
+  close = self -> @writer.close True
 
   #: Handle a single stanza.
   #:
-  #: handle :: Element XMLWriter -> coroutine a
+  #: handle :: Element -> coroutine a
   #:
-  handle = asyncio.coroutine $ node writer ~>
+  handle = asyncio.coroutine $ node ~>
     # There is no easy way to use XPath to select this element iff it has a certain name.
     # If we wrap the node in one more element, however, this is trivial: `name`.
     root = Element ''
