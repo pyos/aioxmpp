@@ -64,6 +64,11 @@ XMLProtocol = subclass asyncio.streams.FlowControlMixin asyncio.Protocol where
         @level == 1 => asyncio.async loop: @loop $ @handle node
     (super XMLProtocol self).data_received data
 
+  connection_lost = exc ~>
+    for (task, _) in @wait.items! =>
+      task.cancel!
+    (super XMLProtocol self).connection_lost exc
+
   #: An alias to `writer.send`.
   #:
   #: send :: typeof XMLWriter.send
