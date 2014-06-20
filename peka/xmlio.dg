@@ -31,7 +31,7 @@ XMLWriter = subclass asyncio.StreamWriter where
   #: close :: (Optional bool) -> a
   #:
   close = completely: False ~>
-    @write $ b'</' + @root.encode 'utf-8' + b'>'
+    @write $ b'</' + (@root.split ' ' !! 0).encode 'utf-8' + b'>'
     if completely => @transport.close!
 
 
