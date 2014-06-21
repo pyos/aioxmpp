@@ -24,6 +24,9 @@ Node = subclass object where
     @children = list children
     None
 
+  get = k d: None ~> @attrs.get k d
+  set = k v       ~> @attrs !! k = v
+
   __str__ = self ->
     '<{0}{1}>{2}</{0}>'.format @name
       ''.join $ map ((k, v) -> ' {}={}'.format k $ quoteattr v) @attrs.items!
