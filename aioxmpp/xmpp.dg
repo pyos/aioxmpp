@@ -187,7 +187,7 @@ Client = subclass xmlio.XMLProtocol where
         result.tag == '{%s}failure' % NS_SASL => raise $ PermissionError user
     # TODO: DIGEST-MD5, at least.
 
-  #: XMPP handshake, part 4: bind to a resource.
+  #: XMPP handshake, part 3: bind to a resource.
   #:
   #: bind :: str -> coroutine a
   #:
