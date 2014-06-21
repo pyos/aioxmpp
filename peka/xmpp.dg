@@ -145,7 +145,7 @@ Client = subclass xmlio.XMLProtocol where
   #: XMPP handshake, part 2: authentication. Must be done using one of the protocols
   #: in `features`.
   #:
-  #: auth :: str str (Optional str) -> coroutine a
+  #: auth :: str str -> coroutine a
   #:
   auth = user password ~>
     use_auth   = None
