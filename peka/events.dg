@@ -33,7 +33,8 @@ EventSystem = subclass object where
   #:
   close = self ->
     for task in @tasks => task.cancel!
-    for name in @slots => for obj in @slots !! name => obj :: asyncio.Future => obj.cancel!
+    for name in @slots => for obj in @slots !! name => obj :: asyncio.Future => @disconnect name obj
+    @tasks.clear!
 
   #: Add an event handler.
   #:
@@ -49,6 +50,7 @@ EventSystem = subclass object where
   #: disconnect :: str (a -> b) -> c
   #:
   disconnect = name callback ~>
+    callback :: asyncio.Future => callback.cancel!
     index = 0
     for (index, (_, cb)) in enumerate (@slots !! name) => cb == callback => break!
     (@slots !! name).pop index
