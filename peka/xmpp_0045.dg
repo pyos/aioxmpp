@@ -41,12 +41,12 @@ init = subclass object where
     room.bare in @entered => raise $ ValueError $ 'room {} already entered'.format room.bare
 
     # TODO send the password
-    # If successful, the server does not send a response. Instead,
-    # we need to listen for a non-`error` presence from this room.
     nodeid = @proto.randomid
     node   = Node 'presence' id: nodeid to: room.full $ Node 'x' xmlns: namespace
     yield from $ @proto.send node
 
+    # If successful, the server does not send a response. Instead,
+    # we need to listen for a non-`error` presence from this room.
     resp = yield from $ @proto.wait_for $ 'presence-%s' % room.bare
     resp.get 'type' == 'error' => raise $ XMPPError $ resp.findall ('{%s}error' % NS_CLIENT) !! 0
     Room self room @proto resp
