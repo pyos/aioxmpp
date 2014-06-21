@@ -56,7 +56,7 @@ Client = subclass xmlio.XMLProtocol where
   #:
   #: extend :: ModuleType -> a
   #:
-  extend = module ~> setattr @ext module.name $ module.init self
+  extend = module ~> not $ hasattr @ext module.name => setattr @ext module.name $ module.init self
 
   #: Handle an arbitrary stanza.
   #:
