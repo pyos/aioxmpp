@@ -99,6 +99,7 @@ XMLProtocol = subclass asyncio.streams.FlowControlMixin asyncio.Protocol where
 
   connection_lost = exc ~>
     for task in @wait => task.cancel!
+    @close!
     (super XMLProtocol self).connection_lost exc
 
   #: An alias to `writer.send`.
@@ -119,20 +120,32 @@ XMLProtocol = subclass asyncio.streams.FlowControlMixin asyncio.Protocol where
   #:
   handle = asyncio.coroutine $ node ~>
     @log.debug 'RECV %s' $ tostring node encoding: 'unicode'
+    done = False
     # There is no easy way to use XPath to select this element iff it has a certain name.
     # If we wrap the node in one more element, however, this is trivial: `name`.
     root = Element 'root'
     root.append node
-    for (task, pattern) in @wait.items! =>
-      if (result = root.findall pattern) =>
+    for (task, (pattern, isxpath)) in @wait.items! =>
+      result = if
+        isxpath   => root.xpath   pattern  # XPath 1.0, requires lxml.
+        otherwise => root.findall pattern
+      if result =>
         task.set_result result
+        done = True
+    not done => yield from $ @respond node
+
+  #: Respond to a node nothing's been waiting fore.
+  #:
+  #: respond :: Element -> coroutine a
+  #:
+  respond = asyncio.coroutine $ node ~> @log.debug 'ignoring this node'
 
   #: Wait for a stanza that matches a certain XPath.
   #:
-  #: wait_for :: str -> coroutine [Element]
+  #: wait_for :: str (Optional bool) -> coroutine [Element]
   #:
-  wait_for = match ~>
+  wait_for = match xpath: False ~>
     task = asyncio.Future loop: @loop
-    @wait !! task = match
+    @wait !! task = match, xpath
     except err     => yield from task
            finally => @wait.pop task
