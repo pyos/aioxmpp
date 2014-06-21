@@ -66,9 +66,10 @@ Client = subclass xmlio.XMLProtocol where
   #: _slot_node :: Element -> coroutine a
   #:
   _slot_node = asyncio.coroutine $ node ~> if
-    node.get 'type' == 'result' => yield from $ @emit 'response' node
-    node.get 'type' == 'error'  => yield from $ @emit 'response' node
-    node.tag == '{%s}iq'       % NS_CLIENT => yield from $ @emit 'iq'       node
+    node.tag == '{%s}iq'       % NS_CLIENT => if
+      node.get 'type' == 'result' => yield from $ @emit 'response' node
+      node.get 'type' == 'error'  => yield from $ @emit 'response' node
+      otherwise                   => yield from $ @emit 'iq'       node
     node.tag == '{%s}message'  % NS_CLIENT => yield from $ @emit 'message'  node
     node.tag == '{%s}presence' % NS_CLIENT => yield from $ @emit 'presence' node
     node.tag == '{%s}features' % NS_STREAM => yield from $ @emit 'ready' (@features = node)
