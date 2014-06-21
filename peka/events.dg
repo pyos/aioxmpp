@@ -1,0 +1,67 @@
+import '/asyncio'
+import '/collections'
+import '/heapq/heappush'
+import '/heapq/heappop'
+
+
+EventSystem = subclass object where
+  __init__ = loop: None ~>
+    @loop  = loop or asyncio.get_event_loop!
+    @slots = collections.defaultdict list
+    @tasks = set!
+    (super EventSystem self).__init__!
+
+  #: Start a task bound to this system.
+  #:
+  #: async :: coroutine a -> Task
+  #:
+  async = coro ~>
+    task = asyncio.async coro loop: @loop
+    task.add_done_callback $ task -> @tasks.remove task
+    @tasks.add task
+    task
+
+  #: Stop all tasks bound to this system.
+  #:
+  #: close :: -> a
+  #:
+  close = self ->
+    for task in @tasks => task.cancel!
+    for name in @slots => for obj in @slots !! name => obj :: asyncio.Future => obj.cancel!
+
+  #: Add an event handler.
+  #:
+  #: connect :: str (a -> b) (Optional int) -> c
+  #:
+  connect = name callback priority: 0 ~>
+    index = 0
+    for (index, (p, _)) in enumerate (@slots !! name) => p >= priority => break!
+    (@slots !! name).insert index (priority, callback)
+
+  #: Remove a previously added event handler.
+  #:
+  #: disconnect :: str (a -> b) -> c
+  #:
+  disconnect = name callback ~>
+    index = 0
+    for (index, (_, cb)) in enumerate (@slots !! name) => cb == callback => break!
+    (@slots !! name).pop index
+
+  #: Call handlers for an event in order, stop at the first one that returns True.
+  #:
+  #: emit :: str (Optional a) -> coroutine bool
+  #:
+  emit = name arg: None ~>
+    for (_, slot) in @slots !! name =>
+      if slot :: asyncio.Future => slot.set_result arg
+         yield from $ slot arg => break!
+
+  #: Wait until an event is fired.
+  #:
+  #: wait_for :: str (Optional int) -> coroutine a
+  #:
+  wait_for = name priority: 0 ~>
+    waiter = asyncio.Future loop: @loop
+    @connect name waiter priority
+    except _       => yield from waiter
+           finally => @disconnect name waiter

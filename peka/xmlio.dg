@@ -5,14 +5,15 @@ import '/xml/sax/saxutils/quoteattr'
 except
   err =>
     import '/lxml/etree/tostring'
-    import '/lxml/etree/Element'
     import '/lxml/etree/XMLPullParser'
-    _Element = type $ Element 'nil'
+    import '/lxml/etree/Element'
+    import '/lxml/etree/_Element'
   err :: ImportError =>
     import '/xml/etree/ElementTree/tostring'
-    import '/xml/etree/ElementTree/Element'
     import '/xml/etree/ElementTree/XMLPullParser'
-    _Element = Element
+    _Element = import '/xml/etree/Element'
+
+import 'events/EventSystem'
 
 
 Node = subclass object where
@@ -69,7 +70,7 @@ XMLWriter = subclass asyncio.StreamWriter where
     if completely => @transport.close!
 
 
-XMLProtocol = subclass asyncio.streams.FlowControlMixin asyncio.Protocol where
+XMLProtocol = subclass EventSystem asyncio.streams.FlowControlMixin asyncio.Protocol where
   #: A XML stanza-based protocol. Calls a function for every child of a root node.
   #:
   #: loop :: EventLoop
@@ -79,9 +80,8 @@ XMLProtocol = subclass asyncio.streams.FlowControlMixin asyncio.Protocol where
     handle => @handle = asyncio.coroutine handle
     @loop  = loop or asyncio.get_event_loop!
     @root  = root
-    @wait  = dict!
     @log   = logging.getLogger 'asyncio.xml'
-    (super XMLProtocol self).__init__!
+    (super XMLProtocol self).__init__ loop: loop
 
   connection_made = transport ~>
     @level     = 0
@@ -97,11 +97,12 @@ XMLProtocol = subclass asyncio.streams.FlowControlMixin asyncio.Protocol where
       ev == 'start' => @level += 1
       ev == 'end'   =>
         @level -= 1
-        @level == 1 => asyncio.async loop: @loop $ @handle node
+        @level == 1 =>
+          @log.debug 'RECV %s' $ tostring node encoding: 'unicode'
+          @async $ @emit 'node' node
     (super XMLProtocol self).data_received data
 
   connection_lost = exc ~>
-    for task in @wait => task.cancel!
     @close!
     (super XMLProtocol self).connection_lost exc
 
@@ -113,42 +114,8 @@ XMLProtocol = subclass asyncio.streams.FlowControlMixin asyncio.Protocol where
 
   #: An alias to `writer.close`.
   #:
-  #: close :: typeof XMLWriter.close
+  #: close :: -> a
   #:
-  close = self -> @writer.close True
-
-  #: Handle a single stanza.
-  #:
-  #: handle :: Element -> coroutine a
-  #:
-  handle = asyncio.coroutine $ node ~>
-    @log.debug 'RECV %s' $ tostring node encoding: 'unicode'
-    done = False
-    # There is no easy way to use XPath to select this element iff it has a certain name.
-    # If we wrap the node in one more element, however, this is trivial: `name`.
-    root = Element 'root'
-    root.append node
-    for (task, (pattern, isxpath)) in @wait.items! =>
-      result = if
-        isxpath   => root.xpath   pattern  # XPath 1.0, requires lxml.
-        otherwise => root.findall pattern
-      if result =>
-        task.set_result result
-        done = True
-    not done => yield from $ @respond node
-
-  #: Respond to a node nothing's been waiting fore.
-  #:
-  #: respond :: Element -> coroutine a
-  #:
-  respond = asyncio.coroutine $ node ~> @log.debug 'ignoring this node'
-
-  #: Wait for a stanza that matches a certain XPath.
-  #:
-  #: wait_for :: str (Optional bool) -> coroutine [Element]
-  #:
-  wait_for = match xpath: False ~>
-    task = asyncio.Future loop: @loop
-    @wait !! task = match, xpath
-    except err     => yield from task
-           finally => @wait.pop task
+  close = self ->
+    @writer.close True
+    (super XMLProtocol self).close!

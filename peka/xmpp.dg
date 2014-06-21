@@ -13,11 +13,11 @@ NS_TLS     = 'urn:ietf:params:xml:ns:xmpp-tls'
 NS_SASL    = 'urn:ietf:params:xml:ns:xmpp-sasl'
 NS_BIND    = 'urn:ietf:params:xml:ns:xmpp-bind'
 NS_SESSION = 'urn:ietf:params:xml:ns:xmpp-session'
-NS_VERSION = 'jabber:iq:version'
-NS_PING    = 'jabber:iq:ping'
+NS_STANZAS = 'urn:ietf:params:xml:ns:xmpp-stanzas'
 
 
 XMPPError = subclass Exception where
+  # TODO add some useful fields.
 
 
 JabberID = subclass object where
@@ -29,9 +29,14 @@ JabberID = subclass object where
   bare = ~> '{}@{}'    .format @user @host
   full = ~> '{}@{}/{}' .format @user @host @resource
 
+  __str__ = self -> if
+    @resource => @full
+    otherwise => @bare
+
 
 Client = subclass xmlio.XMLProtocol where
   __init__ = host loop: None ~>
+    @ext  = (subclass object)!
     @self = JabberID host
     @host = host
     @root = ' '.join $ list'
@@ -39,26 +44,55 @@ Client = subclass xmlio.XMLProtocol where
       'xmlns:xml="%s"'           % NS_XML
       'xmlns:stream="%s"'        % NS_STREAM
       'version="1.0" to="%s"'    % host
-    @_handles = set!
     (super Client self).__init__ root: @root loop: loop
 
-  #: Start a task bound to this connection.
-  #:
-  #: async :: coroutine a -> Task
-  #:
-  async = coro ~>
-    task = asyncio.async coro loop: @loop
-    task.add_done_callback $ task -> @_handles.remove task
-    @_handles.add task
-    task
+    @connect 'node'       priority: 999 @_slot_node
+    @connect 'iq-request' priority: 999 @_slot_iq_request
+    @connect 'message'    priority: 999 @_slot_message
+    @connect 'presence'   priority: 999 @_slot_presence
+    None
 
-  #: Stop listening for stuff.
+  #: Load an extension from a given module.
   #:
-  #: close :: typeof XMLProtocol.close
+  #: extend :: ModuleType -> a
   #:
-  close = self ->
-    for handle in @_handles => handle.cancel!
-    (super Client self).close!
+  extend = module ~> setattr @ext module.name $ module.init self
+
+  #: Handle an arbitrary stanza.
+  #:
+  #: _slot_node :: Element -> coroutine a
+  #:
+  _slot_node = asyncio.coroutine $ node ~> if
+    node.tag == '{%s}iq'       % NS_CLIENT => if
+      node.get 'type' == 'result' => yield from $ @emit 'iq-response' node
+      node.get 'type' == 'error'  => yield from $ @emit 'iq-response' node
+      otherwise                   => yield from $ @emit 'iq-request'  node
+    node.tag == '{%s}message'  % NS_CLIENT => yield from $ @emit 'message'  node
+    node.tag == '{%s}presence' % NS_CLIENT => yield from $ @emit 'presence' node
+    node.tag == '{%s}features' % NS_STREAM => yield from $ @emit 'ready' (@features = node)
+
+  #: Handle an `iq` request (by replying with an error.)
+  #:
+  #: _slot_iq_request :: Element -> coroutine a
+  #:
+  _slot_iq_request = asyncio.coroutine $ node ~>
+    yield from $ @respond node $ Node 'iq' type: 'error' $
+      Node 'error' type: 'cancel' $ Node 'feature-not-implemented' xmlns: NS_STANZAS
+
+  #: Dispatch a message.
+  #:
+  #: _slot_message :: Element -> coroutine a
+  #:
+  _slot_message = asyncio.coroutine $ node ~>
+    # TODO emit the `message-<type>-<room|participant>` signal.
+
+  #: Dispatch a presence.
+  #:
+  #: _slot_presence :: Element -> coroutine a
+  #:
+  _slot_presence = asyncio.coroutine $ node ~>
+    # TODO emit the `presence-groupchat-<room>` signal.
+    # TODO emit some authorization-related signals.
 
   #: Generate a random stanza ID.
   #:
@@ -68,18 +102,18 @@ Client = subclass xmlio.XMLProtocol where
 
   #: Wait until a response to a request, which is assigned a random ID.
   #:
-  #: send_with_id :: (Either Node Element) -> coroutine Element
+  #: request :: (Either Node Element) -> coroutine Element
   #:
-  send_with_id = node ~>
+  request = node ~>
     node.set 'id' (id = @randomid)
     yield from $ @send node
 
-    reply = fst $ yield from $ @wait_for xpath: True $
-      # Note that the node may be sent to ourselves; we should ignore it.
-      '*[@id=%s and @type!="get" and @type!="set"]' % xmlio.quoteattr id
+    while True =>
+      reply = yield from $ @wait_for 'iq-response'
+      reply.get 'id' == id => break!
 
-    if reply.get 'type' == 'error' => raise $ XMPPError reply
-       otherwise => reply
+    reply.get 'type' == 'error' => raise $ XMPPError $ reply.findall ('{%s}error' % NS_CLIENT) !! 0
+    reply
 
   #: Respond to an `iq` node.
   #:
@@ -90,28 +124,25 @@ Client = subclass xmlio.XMLProtocol where
     node.set 'to' $ req.get 'from'
     yield from $ @send node
 
-  #: XMPP handshake, part 1: `stream:features`.
-  #:
-  #: load_features :: coroutine a
-  #:
-  load_features = ~>
-    # TODO have a better representation.
-    @features, = yield from $ @wait_for $ '{%s}features' % NS_STREAM
-
-  #: XMPP handshake, part 2: TLS.
+  #: XMPP handshake, part 1: TLS.
   #:
   #: starttls :: coroutine a
   #:
   starttls = ~>
     if @features.findall $ '{%s}starttls' % NS_TLS =>
       yield from $ @send $ Node 'starttls' xmlns: NS_TLS
-      yield from $ @wait_for $ '{%s}*' % NS_TLS
+
+      while True =>
+        result = yield from $ @wait_for 'node'
+        result.tag == '{%s}proceed' % NS_TLS => break!
+        result.tag == '{%s}failure' % NS_TLS => raise $ ConnectionError 'TLS request denied'
+
       waiter = asyncio.Future loop: @loop
       @loop._make_ssl_transport (@transport.get_extra_info 'socket') self None waiter
       yield from waiter
-      yield from $ @load_features
+      yield from $ @wait_for 'ready'
 
-  #: XMPP handshake, part 3: authentication. Must be done using one of the protocols
+  #: XMPP handshake, part 2: authentication. Must be done using one of the protocols
   #: in `features`.
   #:
   #: auth :: str str (Optional str) -> coroutine a
@@ -124,7 +155,7 @@ Client = subclass xmlio.XMLProtocol where
        otherwise => raise $ ValueError 'no auth mechanism supported by both sides'
     @self.user = user
     @connection_made @transport
-    yield from @load_features
+    yield from $ @wait_for 'ready'
 
   auth.methods = dict'
     #: Plain authentication: `\0username\0password` in base64.
@@ -136,10 +167,10 @@ Client = subclass xmlio.XMLProtocol where
         base64.b64encode $ b'\0' + user.encode 'utf-8' + b'\0' + password.encode 'utf-8'
         'ascii'
 
-      result, = yield from $ @wait_for $ '{%s}*' % NS_SASL
-      if result.tag == 'success' =>
-         result.tag == 'failure' => raise $ PermissionError user
-         otherwise               => raise $ ConnectionError 'incorrect auth result'
+      while True =>
+        result = yield from $ @wait_for 'node'
+        result.tag == '{%s}success' % NS_SASL => break!
+        result.tag == '{%s}failure' % NS_SASL => raise $ PermissionError user
     # TODO: DIGEST-MD5, at least.
 
   #: XMPP handshake, part 4: bind to a resource.
@@ -148,27 +179,14 @@ Client = subclass xmlio.XMLProtocol where
   #:
   bind = resource ~>
     @self.resource = resource
-    yield from $ @send_with_id $ Node 'iq' type: 'set' $ Node 'bind' xmlns: NS_BIND $ Node 'resource' resource
-    yield from $ @send_with_id $ Node 'iq' type: 'set' $ Node 'session' xmlns: NS_SESSION
-
-    @async
-      where while True =>
-        req, = yield from $ @wait_for $ '{%s}iq[{%s}ping]' % (NS_CLIENT, NS_PING)
-        yield from $ @respond req $ Node 'iq' type: 'result'
-
-    @async
-      where while True =>
-        req, = yield from $ @wait_for $ '{%s}iq[{%s}query]' % (NS_CLIENT, NS_VERSION)
-        yield from $ @respond req $ Node 'iq' type: 'result' $ Node 'query' xmlns: NS_VERSION
-          Node 'name'    'asyncio.xmpp'
-          Node 'version' '0.0.0.0.0.1 pre-alpha'
-          Node 'os'      'unknown'
+    yield from $ @request $ Node 'iq' type: 'set' $ Node 'bind' xmlns: NS_BIND $ Node 'resource' resource
+    yield from $ @request $ Node 'iq' type: 'set' $ Node 'session' xmlns: NS_SESSION
 
 
 client = user password host port: 5222 loop: None resource: None **: k ->
   loop  = loop or asyncio.get_event_loop!
   proto = snd $ yield from $ loop.create_connection (-> Client host loop) host port **: k
-  yield from $ proto.load_features
+  yield from $ proto.wait_for 'ready'
   yield from $ proto.starttls
   yield from $ proto.auth user password
   yield from $ proto.bind $ resource or proto.randomid
