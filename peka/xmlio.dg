@@ -1,7 +1,33 @@
 import '/asyncio'
-import '/xml/etree/ElementTree/tostring'
-import '/xml/etree/ElementTree/Element'
-import '/xml/etree/ElementTree/XMLPullParser'
+import '/logging'
+import '/xml/sax/saxutils/quoteattr'
+
+except
+  err =>
+    import '/lxml/etree/tostring'
+    import '/lxml/etree/Element'
+    import '/lxml/etree/XMLPullParser'
+    _Element = type $ Element 'nil'
+  err :: ImportError =>
+    import '/xml/etree/ElementTree/tostring'
+    import '/xml/etree/ElementTree/Element'
+    import '/xml/etree/ElementTree/XMLPullParser'
+    _Element = Element
+
+
+Node = subclass object where
+  # ElementTree nodes tend to screw up namespace information.
+  # This node doesn't care.
+  __init__ = name *: children **: attrs ~>
+    @name     = name
+    @attrs    = attrs
+    @children = list children
+    None
+
+  __str__ = self ->
+    '<{0}{1}>{2}</{0}>'.format @name
+      ''.join $ map ((k, v) -> ' {}={}'.format k $ quoteattr v) @attrs.items!
+      ''.join $ map str @children
 
 
 XMLWriter = subclass asyncio.StreamWriter where
@@ -20,10 +46,15 @@ XMLWriter = subclass asyncio.StreamWriter where
   #: Send a single stanza. `yield from` the result of this method to wait until
   #: everything is 100% sent to the other side.
   #:
-  #: send :: Element -> coroutine a
+  #: send :: (Either Node Element) -> coroutine a
   #:
   send = node ~>
-    @write $ tostring node 'utf-8'
+    data = if
+      node :: _Element => tostring node encoding: 'unicode'
+      node :: Node     => str node
+      otherwise        => raise $ TypeError 'not an Element/Node'
+    @_protocol.log.debug 'SEND %s' data
+    @write $ data.encode 'utf-8'
     @drain!
 
   #: Gracefully close the connection, optionally closing the socket.
@@ -47,6 +78,7 @@ XMLProtocol = subclass asyncio.streams.FlowControlMixin asyncio.Protocol where
     @root  = root
     @level = 0
     @wait  = dict!
+    @log   = logging.getLogger 'asyncio.xml'
     (super XMLProtocol self).__init__!
 
   connection_made = transport ~>
@@ -55,8 +87,13 @@ XMLProtocol = subclass asyncio.streams.FlowControlMixin asyncio.Protocol where
     (super XMLProtocol self).connection_made transport
 
   data_received = data ~>
+    # Some servers tend to act like it's the start of the document
+    # in case of errors. ElementTree can't parse that.
+    if data.startswith b'<?' => data = data.partition b'?>' !! 2
+
     except err => @parser.feed data
            err :: Exception => @writer.close True
+
     for (ev, node) in @parser.read_events! => if
       ev == 'start' => @level += 1
       ev == 'end'   =>
@@ -65,8 +102,7 @@ XMLProtocol = subclass asyncio.streams.FlowControlMixin asyncio.Protocol where
     (super XMLProtocol self).data_received data
 
   connection_lost = exc ~>
-    for (task, _) in @wait.items! =>
-      task.cancel!
+    for task in @wait => task.cancel!
     (super XMLProtocol self).connection_lost exc
 
   #: An alias to `writer.send`.
@@ -86,9 +122,10 @@ XMLProtocol = subclass asyncio.streams.FlowControlMixin asyncio.Protocol where
   #: handle :: Element -> coroutine a
   #:
   handle = asyncio.coroutine $ node ~>
+    @log.debug 'RECV %s' $ tostring node encoding: 'unicode'
     # There is no easy way to use XPath to select this element iff it has a certain name.
     # If we wrap the node in one more element, however, this is trivial: `name`.
-    root = Element ''
+    root = Element 'root'
     root.append node
     for (task, pattern) in @wait.items! =>
       if (result = root.findall pattern) =>
