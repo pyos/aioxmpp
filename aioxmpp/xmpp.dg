@@ -14,6 +14,7 @@ NS_SASL    = 'urn:ietf:params:xml:ns:xmpp-sasl'
 NS_BIND    = 'urn:ietf:params:xml:ns:xmpp-bind'
 NS_SESSION = 'urn:ietf:params:xml:ns:xmpp-session'
 NS_STANZAS = 'urn:ietf:params:xml:ns:xmpp-stanzas'
+NS_DELAY   = 'urn:xmpp:delay'
 
 
 XMPPError = subclass Exception where

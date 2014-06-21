@@ -1,10 +1,12 @@
 import '/asyncio'
 import '/collections'
+import '/datetime/datetime'
 
 import 'xmlio/Node'
 import 'xmpp/JabberID'
 import 'xmpp/XMPPError'
 import 'xmpp/NS_CLIENT'
+import 'xmpp/NS_DELAY'
 
 
 name      = 'muc'
@@ -32,24 +34,26 @@ init = subclass object where
 
   #: Enter a groupchat.
   #:
-  #: () :: (Either JabberID str) (Optional str) -> coroutine Room
+  #: () :: (Either JabberID str) (Optional str) (Optional int) -> coroutine Room
   #:
-  __call__ = room nick password: None ~>
+  __call__ = room nick password: None history: None ~>
     room = if
       room :: JabberID => JabberID room.bare None nick
       otherwise        => JabberID room      None nick
     room.bare in @entered => raise $ ValueError $ 'room {} already entered'.format room.bare
 
-    # TODO send the password
-    nodeid = @proto.randomid
-    node   = Node 'presence' id: nodeid to: room.full $ Node 'x' xmlns: namespace
-    yield from $ @proto.send node
+    node = Node 'x' xmlns: namespace
+    not $ password is None => node.children.append $ Node 'password' password
+    not $ history  is None => node.children.append $ Node 'history' maxstanzas: (str history)
+    yield from $ @proto.send $ Node 'presence' id: @proto.randomid to: room.full node
 
     # If successful, the server does not send a response. Instead,
     # we need to listen for a non-`error` presence from this room.
     resp = yield from $ @proto.wait_for $ 'presence-%s' % room.bare
     resp.get 'type' == 'error' => raise $ XMPPError $ resp.findall ('{%s}error' % NS_CLIENT) !! 0
-    Room self room @proto resp
+    room = Room self room @proto
+    yield from $ room._enqueue resp
+    room
 
 
 Room = subclass object where
@@ -58,9 +62,10 @@ Room = subclass object where
   #: jid   :: JabberID
   #: proto :: Client
   #:
-  __init__ = @ext @jid @proto _first_presence ~>
-    @queue  = collections.deque (_first_presence,)
+  __init__ = @ext @jid @proto ~>
+    @queue  = collections.deque ()
     @waiter = None
+    @left   = False
     @proto.connect ('presence-%s'          % @jid.bare) @_enqueue
     @proto.connect ('message-groupchat-%s' % @jid.bare) @_enqueue
     @ext.entered.add @jid.bare
@@ -71,20 +76,61 @@ Room = subclass object where
   #: _enqueue :: Element -> coroutine bool
   #:
   _enqueue = asyncio.coroutine $ node ~>
-    @queue.append node
+    @queue.append (node, datetime.utcnow!)
     @waiter => @waiter.set_result True
     @waiter = None
+    if node.get 'from' == @jid.full and node.get 'type' == 'unavailable' =>
+      @left = True
+      @proto.disconnect ('presence-%s'          % @jid.bare) @_enqueue
+      @proto.disconnect ('message-groupchat-%s' % @jid.bare) @_enqueue
+      @ext.entered.remove @jid.bare
     True
 
   #: Fetch the next item from the queue. If there is none, wait until one is received.
   #:
-  #: __iter__ :: -> coroutine Element  # TODO: something more useful.
+  #: __iter__ :: -> coroutine MUCNode
   #:
   __iter__ = self ->
     while not @queue => yield from $
+      @left   => raise GeneratorExit
       @waiter = @waiter or asyncio.Future loop: @proto.loop
-    @queue.popleft!
+    node, ts = @queue.popleft!
+    if node.tag == '{%s}message'  % NS_CLIENT => MUCMessage  node ts
+       node.tag == '{%s}presence' % NS_CLIENT => MUCPresence node ts
 
-  # TODO message  :: str -> coroutine a
-  # TODO exit     :: ???
-  # TODO something else
+  #: Exit this MUC.
+  #:
+  #: exit :: (Optional str) -> coroutine a
+  #:
+  exit = reason: None ~>
+    node = Node 'presence' to: @jid.full type: 'unavailable'
+    reason => node.children.append $ Node 'status' reason
+    yield from $ @proto.send node
+
+
+maybe_text = node -> if
+  node      => (node !! 0).text
+  otherwise => None
+
+
+MUCNode = subclass object where
+  __init__ = @node @_time ~>
+  jid  = ~> JabberID $ @node.get 'from'
+  room = ~> @jid.bare
+  nick = ~> @jid.resource
+  time = ~>
+    delay = @node.findall $ '{%s}delay' % NS_DELAY
+    if delay     => datetime.strptime ((delay !! 0).get 'stamp') '%Y-%m-%dT%H:%M:%SZ'
+       otherwise => @_time
+
+
+MUCMessage = subclass MUCNode where
+  body    = ~> maybe_text $ @node.findall $ '{%s}body'    % NS_CLIENT
+  subject = ~> maybe_text $ @node.findall $ '{%s}subject' % NS_CLIENT
+
+
+MUCPresence = subclass MUCNode where
+  type        = ~> @node.get 'type' 'available'
+  status      = ~> raise NotImplementedError
+  affiliation = ~> raise NotImplementedError  # NOTE these may not appear
+  role        = ~> raise NotImplementedError  #   in every `presence`.
