@@ -74,13 +74,12 @@ XMLWriter = subclass asyncio.StreamWriter where
 
 
 XMLProtocol = subclass EventSystem asyncio.streams.FlowControlMixin asyncio.Protocol where
-  #: A XML stanza-based protocol. Calls a function for every child of a root node.
+  #: A XML stanza-based protocol. Emits a `node` event for every child of a root node.
   #:
   #: loop :: EventLoop
   #: root :: str
   #:
-  __init__ = handle: None root: 'stream' loop: None ~>
-    handle => @handle = asyncio.coroutine handle
+  __init__ = root: 'stream' loop: None ~>
     @loop  = loop or asyncio.get_event_loop!
     @root  = root
     @log   = logging.getLogger 'asyncio.xml'
