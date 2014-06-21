@@ -73,6 +73,7 @@ Room = subclass object where
   _enqueue = asyncio.coroutine $ node ~>
     @queue.append node
     @waiter => @waiter.set_result True
+    @waiter = None
     True
 
   #: Fetch the next item from the queue. If there is none, wait until one is received.
@@ -80,11 +81,8 @@ Room = subclass object where
   #: __iter__ :: -> coroutine Element  # TODO: something more useful.
   #:
   __iter__ = self ->
-    while not @queue =>
-      not @waiter =>
-        @waiter = asyncio.Future loop: @proto.loop
-        except _       => yield from @waiter
-               finally => @waiter = None
+    while not @queue => yield from $
+      @waiter = @waiter or asyncio.Future loop: @proto.loop
     @queue.popleft!
 
   # TODO message  :: str -> coroutine a
