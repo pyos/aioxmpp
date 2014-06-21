@@ -11,7 +11,7 @@ namespace = 'jabber:iq:ping'
 #: http://xmpp.org/extensions/xep-0199.html
 #:
 init = self ->
-  @connect 'iq-request' $ node ->
+  @connect 'iq' $ node ->
     sn = node.findall $ '{%s}ping' % namespace
     sn =>
       yield from $ @respond node $ Node 'iq' type: 'result'

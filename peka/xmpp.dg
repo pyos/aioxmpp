@@ -46,10 +46,10 @@ Client = subclass xmlio.XMLProtocol where
       'version="1.0" to="%s"'    % host
     (super Client self).__init__ root: @root loop: loop
 
-    @connect 'node'       priority: 999 @_slot_node
-    @connect 'iq-request' priority: 999 @_slot_iq_request
-    @connect 'message'    priority: 999 @_slot_message
-    @connect 'presence'   priority: 999 @_slot_presence
+    @connect 'node'     priority: 999 @_slot_node
+    @connect 'iq'       priority: 999 @_slot_iq_request
+    @connect 'message'  priority: 999 @_slot_message
+    @connect 'presence' priority: 999 @_slot_presence
     None
 
   #: Load an extension from a given module.
@@ -63,10 +63,9 @@ Client = subclass xmlio.XMLProtocol where
   #: _slot_node :: Element -> coroutine a
   #:
   _slot_node = asyncio.coroutine $ node ~> if
-    node.tag == '{%s}iq'       % NS_CLIENT => if
-      node.get 'type' == 'result' => yield from $ @emit 'iq-response' node
-      node.get 'type' == 'error'  => yield from $ @emit 'iq-response' node
-      otherwise                   => yield from $ @emit 'iq-request'  node
+    node.get 'type' == 'result' => yield from $ @emit 'response' node
+    node.get 'type' == 'error'  => yield from $ @emit 'response' node
+    node.tag == '{%s}iq'       % NS_CLIENT => yield from $ @emit 'iq'       node
     node.tag == '{%s}message'  % NS_CLIENT => yield from $ @emit 'message'  node
     node.tag == '{%s}presence' % NS_CLIENT => yield from $ @emit 'presence' node
     node.tag == '{%s}features' % NS_STREAM => yield from $ @emit 'ready' (@features = node)
@@ -109,7 +108,7 @@ Client = subclass xmlio.XMLProtocol where
     yield from $ @send node
 
     while True =>
-      reply = yield from $ @wait_for 'iq-response'
+      reply = yield from $ @wait_for 'response'
       reply.get 'id' == id => break!
 
     reply.get 'type' == 'error' => raise $ XMPPError $ reply.findall ('{%s}error' % NS_CLIENT) !! 0
