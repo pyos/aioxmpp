@@ -1,0 +1,41 @@
+import 'xmlio/Node'
+
+
+name      = 'version'
+namespace = 'jabber:iq:version'
+
+
+software = 'asyncio.xmpp'
+version  = '0.0.0.0.0.1 pre-alpha'
+platform = 'unknown'
+
+
+#: XEP-0092: Software Version
+#:
+#: http://xmpp.org/extensions/xep-0092.html
+#:
+init = self ->
+  @connect 'iq-request' $ node ->
+    sn = node.findall $ '{%s}query' % namespace
+    sn =>
+      yield from $ @respond node $ Node 'iq' type: 'result' $ Node 'query' xmlns: namespace
+        Node 'name'    software
+        Node 'version' version
+        Node 'os'      platform
+      True
+  
+  #: Retrieve the software version of some node as a (software, version, platform) tuple.
+  #:
+  #: version :: (Either JabberID str) -> (str, str, str)
+  #:
+  jid ->
+    r = yield from $ @request $ Node 'iq' type: 'get' to: (str jid) $ Node 'query' xmlns: namespace
+
+    maybe_text = nodes -> if
+      nodes     => (head nodes).text
+      otherwise => 'unknown'
+
+    tuple'
+      maybe_text $ r.findall $ '{%s}query/{%s}name'    % (namespace, namespace)
+      maybe_text $ r.findall $ '{%s}query/{%s}version' % (namespace, namespace)
+      maybe_text $ r.findall $ '{%s}query/{%s}os'      % (namespace, namespace)
