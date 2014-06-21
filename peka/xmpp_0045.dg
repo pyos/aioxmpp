@@ -4,6 +4,7 @@ import '/collections'
 import 'xmlio/Node'
 import 'xmpp/JabberID'
 import 'xmpp/XMPPError'
+import 'xmpp/NS_CLIENT'
 
 
 name      = 'muc'
@@ -31,9 +32,9 @@ init = subclass object where
 
   #: Enter a groupchat.
   #:
-  #: enter :: (Either JabberID str) (Optional str) -> coroutine Room
+  #: () :: (Either JabberID str) (Optional str) -> coroutine Room
   #:
-  enter = room nick password: None ~>
+  __call__ = room nick password: None ~>
     room = if
       room :: JabberID => JabberID room.bare None nick
       otherwise        => JabberID room      None nick
@@ -47,7 +48,7 @@ init = subclass object where
     yield from $ @proto.send node
 
     resp = yield from $ @proto.wait_for $ 'presence-%s' % room.bare
-    resp.get 'type' == 'error' => raise $ XMPPError $ resp.findall 'error' !! 0
+    resp.get 'type' == 'error' => raise $ XMPPError $ resp.findall ('{%s}error' % NS_CLIENT) !! 0
     Room self room @proto resp
 
 
