@@ -77,7 +77,7 @@ Client = subclass xmlio.XMLProtocol where
   #:
   _slot_iq_request = asyncio.coroutine $ node ~>
     yield from $ @respond node $ Node 'iq' type: 'error' $
-      Node 'error' type: 'cancel' $ Node 'feature-not-implemented' xmlns: NS_STANZAS
+      Node 'error' type: 'cancel' $ Node 'service-unavailable' xmlns: NS_STANZAS
 
   #: Dispatch a message.
   #:
