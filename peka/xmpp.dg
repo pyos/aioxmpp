@@ -38,7 +38,7 @@ Client = subclass xmlio.XMLProtocol where
     if node :: xmlio._Element => node.set 'id' (id = @randomid)
        node :: xmlio.Node     => node.attrs !! 'id' = id = @randomid
     yield from $ @send node
-    fst $ yield from $ @wait_for $ './[@id=%s]' % xmlio.quoteattr id
+    fst $ yield from $ @wait_for $ '*[@id=%s]' % xmlio.quoteattr id
 
   #: XMPP handshake, part 1: `stream:features`.
   #:
@@ -72,6 +72,8 @@ Client = subclass xmlio.XMLProtocol where
     for x in mechanisms => if x.text in @auth.methods => use_auth = @auth.methods !! x.text
     if use_auth  => yield from $ use_auth self user password
        otherwise => raise $ ValueError 'no auth mechanism supported by both sides'
+    @connection_made @transport
+    yield from @load_features
 
   auth.methods = dict'
     #: Plain authentication: `\0username\0password` in base64.
@@ -94,10 +96,10 @@ Client = subclass xmlio.XMLProtocol where
   #: bind :: str -> coroutine a
   #:
   bind = resource ~>
-    result = yield from $ @send_with_id $ Node 'iq' type: 'set' $
+    reply = yield from $ @send_with_id $ Node 'iq' type: 'set' $
       Node 'bind' xmlns: NS_BIND $ Node 'resource' resource
 
-    if reply.get 'type' == 'result' =>
+    if reply.get 'type' == 'result' => None
        reply.get 'type' == 'error'  => raise $ Exception $ (reply.findall './/error').get 'code'
        otherwise => raise $ ConnectionError 'incorrect iq type'
 
