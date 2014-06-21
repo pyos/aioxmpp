@@ -11,6 +11,12 @@ EventSystem = subclass object where
     @tasks = set!
     (super EventSystem self).__init__!
 
+  __del__   = self       -> @close!
+  __enter__ = self       -> self
+  __exit__  = self _ _ _ ->
+    @close!
+    False
+
   #: Start a task bound to this system.
   #:
   #: async :: coroutine a -> Task

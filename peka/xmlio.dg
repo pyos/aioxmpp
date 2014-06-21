@@ -45,6 +45,7 @@ XMLWriter = subclass asyncio.StreamWriter where
     (super XMLWriter self).__init__ *: a **: k
     @write $ b'<?xml version="1.0" encoding="utf-8"?>'
     @write $ b'<' + @root.encode 'utf-8' + b'>'
+    @_closed = False
     None
 
   #: Send a single stanza. `yield from` the result of this method to wait until
@@ -66,8 +67,10 @@ XMLWriter = subclass asyncio.StreamWriter where
   #: close :: (Optional bool) -> a
   #:
   close = completely: False ~>
-    @write $ b'</' + (@root.split ' ' !! 0).encode 'utf-8' + b'>'
-    if completely => @transport.close!
+    not @_closed =>
+      @_closed = True
+      @write $ b'</' + (@root.split ' ' !! 0).encode 'utf-8' + b'>'
+      if completely => @transport.close!
 
 
 XMLProtocol = subclass EventSystem asyncio.streams.FlowControlMixin asyncio.Protocol where
