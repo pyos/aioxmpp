@@ -1,0 +1,91 @@
+import '/asyncio'
+import '/collections'
+
+import 'xmlio/Node'
+import 'xmpp/JabberID'
+import 'xmpp/XMPPError'
+
+
+name      = 'muc'
+namespace = 'http://jabber.org/protocol/muc'
+
+
+init = subclass object where
+  #: XEP-0045: Multi-User Chat
+  #:
+  #: http://xmpp.org/extensions/xep-0045.html
+  #:
+  __init__ = @proto ~>
+    # @proto.extend $ import 'xmpp_0030'
+    # ...
+    @proto.connect 'message-groupchat' priority: 999 @_slot_message
+    @entered = set!
+    None
+
+  #: Dispatch a MUC message.
+  #:
+  #: _slot_message :: Element -> coroutine a
+  #:
+  _slot_message = node ~>
+    yield from $ @proto.emit ('message-groupchat-%s' % (JabberID $ node.get 'from').bare) node
+
+  #: Enter a groupchat.
+  #:
+  #: enter :: (Either JabberID str) (Optional str) -> coroutine Room
+  #:
+  enter = room nick password: None ~>
+    room = if
+      room :: JabberID => JabberID room.bare None nick
+      otherwise        => JabberID room      None nick
+    room.bare in @entered => raise $ ValueError $ 'room {} already entered'.format room.bare
+
+    # TODO send the password
+    # If successful, the server does not send a response. Instead,
+    # we need to listen for a non-`error` presence from this room.
+    nodeid = @proto.randomid
+    node   = Node 'presence' id: nodeid to: room.full $ Node 'x' xmlns: namespace
+    yield from $ @proto.send node
+
+    resp = yield from $ @proto.wait_for $ 'presence-%s' % room.bare
+    resp.get 'type' == 'error' => raise $ XMPPError $ resp.findall 'error' !! 0
+    Room self room @proto resp
+
+
+Room = subclass object where
+  #: A single multi-user chat.
+  #:
+  #: jid   :: JabberID
+  #: proto :: Client
+  #:
+  __init__ = @ext @jid @proto _first_presence ~>
+    @queue  = collections.deque (_first_presence,)
+    @waiter = None
+    @proto.connect ('presence-%s'          % @jid.bare) @_enqueue
+    @proto.connect ('message-groupchat-%s' % @jid.bare) @_enqueue
+    @ext.entered.add @jid.bare
+    None
+
+  #: Put the node onto the event queue and wake up those who wait for it.
+  #:
+  #: _enqueue :: Element -> coroutine bool
+  #:
+  _enqueue = asyncio.coroutine $ node ~>
+    @queue.append node
+    @waiter => @waiter.set_result True
+    True
+
+  #: Fetch the next item from the queue. If there is none, wait until one is received.
+  #:
+  #: __iter__ :: -> coroutine Element  # TODO: something more useful.
+  #:
+  __iter__ = self ->
+    while not @queue =>
+      not @waiter =>
+        @waiter = asyncio.Future loop: @proto.loop
+        except _       => yield from @waiter
+               finally => @waiter = None
+    @queue.popleft!
+
+  # TODO message  :: str -> coroutine a
+  # TODO exit     :: ???
+  # TODO something else
