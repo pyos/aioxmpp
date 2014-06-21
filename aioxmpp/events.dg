@@ -1,7 +1,5 @@
 import '/asyncio'
 import '/collections'
-import '/heapq/heappush'
-import '/heapq/heappop'
 
 
 EventSystem = subclass object where
