@@ -1,0 +1,112 @@
+import '/base64'
+import '/random'
+import '/string'
+import '/asyncio'
+
+import 'xmlio'
+import 'xmlio/Node'
+
+NS_CLIENT = 'jabber:client'
+NS_STREAM = 'http://etherx.jabber.org/streams'
+NS_XML    = 'http://www.w3.org/XML/1998/namespace'
+NS_TLS    = 'urn:ietf:params:xml:ns:xmpp-tls'
+NS_SASL   = 'urn:ietf:params:xml:ns:xmpp-sasl'
+NS_BIND   = 'urn:ietf:params:xml:ns:xmpp-bind'
+
+
+Client = subclass xmlio.XMLProtocol where
+  __init__ = host loop: None ~>
+    @host = host
+    @root = ' '.join $ list'
+      'stream:stream xmlns="%s"' % NS_CLIENT
+      'xmlns:xml="%s"'           % NS_XML
+      'xmlns:stream="%s"'        % NS_STREAM
+      'version="1.0" to="%s"'    % host
+    (super Client self).__init__ root: @root loop: loop
+
+  #: Generate a random stanza ID.
+  #:
+  #: randomid :: str
+  #:
+  randomid = ~> ''.join $ map (_ -> random.choice string.ascii_lowercase) $ range 10
+
+  #: Wait until a response to a request, which is assigned a random ID.
+  #:
+  #: send_with_id :: (Either Node Element) -> coroutine Element
+  #:
+  send_with_id = node ~>
+    if node :: xmlio._Element => node.set 'id' (id = @randomid)
+       node :: xmlio.Node     => node.attrs !! 'id' = id = @randomid
+    yield from $ @send node
+    fst $ yield from $ @wait_for $ './[@id=%s]' % xmlio.quoteattr id
+
+  #: XMPP handshake, part 1: `stream:features`.
+  #:
+  #: load_features :: coroutine a
+  #:
+  load_features = ~>
+    # TODO have a better representation.
+    @features, = yield from $ @wait_for $ '{%s}features' % NS_STREAM
+
+  #: XMPP handshake, part 2: TLS.
+  #:
+  #: starttls :: coroutine a
+  #:
+  starttls = ~>
+    if @features.findall $ '{%s}starttls' % NS_TLS =>
+      yield from $ @send $ Node 'starttls' xmlns: NS_TLS
+      yield from $ @wait_for $ '{%s}*' % NS_TLS
+      waiter = asyncio.Future loop: @loop
+      @loop._make_ssl_transport (@transport.get_extra_info 'socket') self None waiter
+      yield from waiter
+      yield from $ @load_features
+
+  #: XMPP handshake, part 3: authentication. Must be done using one of the protocols
+  #: in `features`.
+  #:
+  #: auth :: str str (Optional str) -> coroutine a
+  #:
+  auth = user password ~>
+    use_auth   = None
+    mechanisms = @features.findall $ './/{%s}mechanism' % NS_SASL
+    for x in mechanisms => if x.text in @auth.methods => use_auth = @auth.methods !! x.text
+    if use_auth  => yield from $ use_auth self user password
+       otherwise => raise $ ValueError 'no auth mechanism supported by both sides'
+
+  auth.methods = dict'
+    #: Plain authentication: `\0username\0password` in base64.
+    #:
+    #: _ :: str str -> coroutine a
+    #:
+    'PLAIN', user password ~>
+      yield from $ @send $ Node 'auth' xmlns: NS_SASL mechanism: 'PLAIN' $ bytes.decode
+        base64.b64encode $ b'\0' + user.encode 'utf-8' + b'\0' + password.encode 'utf-8'
+        'ascii'
+
+      result, = yield from $ @wait_for $ '{%s}*' % NS_SASL
+      if result.tag == 'success' =>
+         result.tag == 'failure' => raise $ PermissionError user
+         otherwise               => raise $ ConnectionError 'incorrect auth result'
+    # TODO: DIGEST-MD5, at least.
+
+  #: XMPP handshake, part 4: bind to a resource.
+  #:
+  #: bind :: str -> coroutine a
+  #:
+  bind = resource ~>
+    result = yield from $ @send_with_id $ Node 'iq' type: 'set' $
+      Node 'bind' xmlns: NS_BIND $ Node 'resource' resource
+
+    if reply.get 'type' == 'result' =>
+       reply.get 'type' == 'error'  => raise $ Exception $ (reply.findall './/error').get 'code'
+       otherwise => raise $ ConnectionError 'incorrect iq type'
+
+
+client = user password host port: 5222 loop: None resource: None **: k ->
+  loop  = loop or asyncio.get_event_loop!
+  proto = snd $ yield from $ loop.create_connection (-> Client host loop) host port **: k
+  yield from $ proto.load_features
+  yield from $ proto.starttls
+  yield from $ proto.auth user password
+  yield from $ proto.bind $ resource or proto.randomid
+  proto
