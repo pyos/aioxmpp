@@ -76,14 +76,15 @@ XMLProtocol = subclass asyncio.streams.FlowControlMixin asyncio.Protocol where
     handle => @handle = asyncio.coroutine handle
     @loop  = loop or asyncio.get_event_loop!
     @root  = root
-    @level = 0
     @wait  = dict!
     @log   = logging.getLogger 'asyncio.xml'
     (super XMLProtocol self).__init__!
 
   connection_made = transport ~>
-    @writer = XMLWriter @root transport self None @loop
-    @parser = XMLPullParser ('start', 'end')
+    @level     = 0
+    @transport = transport
+    @writer    = XMLWriter @root transport self None @loop
+    @parser    = XMLPullParser ('start', 'end')
     (super XMLProtocol self).connection_made transport
 
   data_received = data ~>
