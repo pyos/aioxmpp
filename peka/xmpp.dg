@@ -63,7 +63,7 @@ Client = subclass xmlio.XMLProtocol where
 
   #: Handle an arbitrary stanza.
   #:
-  #: _slot_node :: Element -> coroutine a
+  #: _slot_node :: Element -> coroutine bool
   #:
   _slot_node = asyncio.coroutine $ node ~> if
     node.tag == '{%s}iq'       % NS_CLIENT => if
@@ -76,22 +76,23 @@ Client = subclass xmlio.XMLProtocol where
 
   #: Handle an `iq` request (by replying with an error.)
   #:
-  #: _slot_iq_request :: Element -> coroutine a
+  #: _slot_iq_request :: Element -> coroutine bool
   #:
   _slot_iq_request = asyncio.coroutine $ node ~>
     yield from $ @respond node $ Node 'iq' type: 'error' $
       Node 'error' type: 'cancel' $ Node 'service-unavailable' xmlns: NS_STANZAS
+    True
 
   #: Dispatch a message.
   #:
-  #: _slot_message :: Element -> coroutine a
+  #: _slot_message :: Element -> coroutine bool
   #:
   _slot_message = node ~>
     yield from $ @emit ('message-%s' % node.get 'type' 'chat') node
 
   #: Dispatch a one-on-one chat message.
   #:
-  #: _slot_message_chat :: Element -> coroutine a
+  #: _slot_message_chat :: Element -> coroutine bool
   #:
   _slot_message_chat = node ~>
     yield from $ @emit ('message-chat-%s' % node.get 'from') node
@@ -103,9 +104,9 @@ Client = subclass xmlio.XMLProtocol where
   _slot_presence = node ~>
     # TODO emit some authorization-related signals.
     jid   = JabberID $ node.get 'from'
-    both  = jid.bare != jid.full
-    both &= yield from $ @emit ('presence-%s' % jid.bare) node
-    both => yield from $ @emit ('presence-%s' % jid.full) node
+    stop  = jid.bare == jid.full
+    stop |= yield from (@emit ('presence-%s' % jid.bare) node)
+    stop or yield from (@emit ('presence-%s' % jid.full) node)
 
   #: Generate a random stanza ID.
   #:

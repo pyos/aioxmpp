@@ -54,11 +54,12 @@ EventSystem = subclass object where
     (@slots !! name).pop index
 
   #: Call handlers for an event in order, stop at the first one that returns True.
+  #: Returns True iff one of the handlers returned True.
   #:
   #: emit :: str (Optional a) -> coroutine bool
   #:
   emit = name arg: None ~>
-    for (_, slot) in @slots !! name =>
+    not $ for (_, slot) in @slots !! name =>
       if slot :: asyncio.Future => slot.set_result arg
          yield from $ slot arg => break!
 

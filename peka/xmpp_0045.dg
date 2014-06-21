@@ -25,7 +25,7 @@ init = subclass object where
 
   #: Dispatch a MUC message.
   #:
-  #: _slot_message :: Element -> coroutine a
+  #: _slot_message :: Element -> coroutine bool
   #:
   _slot_message = node ~>
     yield from $ @proto.emit ('message-groupchat-%s' % (JabberID $ node.get 'from').bare) node
