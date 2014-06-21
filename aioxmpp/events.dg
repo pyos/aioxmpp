@@ -21,7 +21,9 @@ EventSystem = subclass object where
   #:
   async = coro ~>
     task = asyncio.async coro loop: @loop
-    task.add_done_callback $ task -> @tasks.remove task
+    task.add_done_callback $ task -> except
+      err => @tasks.remove task
+      err :: KeyError =>
     @tasks.add task
     task
 
@@ -39,8 +41,8 @@ EventSystem = subclass object where
   #: connect :: str (a -> b) (Optional int) -> c
   #:
   connect = name callback priority: 0 ~>
-    index = 0
-    for (index, (p, _)) in enumerate (@slots !! name) => p >= priority => break!
+    nope = for (index, (p, _)) in enumerate (@slots !! name) => p >= priority => break!
+    nope => index = len (@slots !! name)
     (@slots !! name).insert index (priority, callback)
 
   #: Remove a previously added event handler.
@@ -50,8 +52,8 @@ EventSystem = subclass object where
   disconnect = name callback ~>
     callback :: asyncio.Future => callback.cancel!
     index = 0
-    for (index, (_, cb)) in enumerate (@slots !! name) => cb == callback => break!
-    (@slots !! name).pop index
+    nope = for (index, (_, cb)) in enumerate (@slots !! name) => cb == callback => break!
+    nope or (@slots !! name).pop index
 
   #: Call handlers for an event in order, stop at the first one that returns True.
   #: Returns True iff one of the handlers returned True.
