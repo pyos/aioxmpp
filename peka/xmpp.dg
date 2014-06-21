@@ -50,6 +50,9 @@ Client = subclass xmlio.XMLProtocol where
     @connect 'iq'       priority: 999 @_slot_iq_request
     @connect 'message'  priority: 999 @_slot_message
     @connect 'presence' priority: 999 @_slot_presence
+    # These messages mean the same thing.
+    @connect 'message-chat'   priority: 999 @_slot_message_chat
+    @connect 'message-normal' priority: 999 @_slot_message_chat
     None
 
   #: Load an extension from a given module.
@@ -82,16 +85,26 @@ Client = subclass xmlio.XMLProtocol where
   #:
   #: _slot_message :: Element -> coroutine a
   #:
-  _slot_message = asyncio.coroutine $ node ~>
-    # TODO emit the `message-<type>-<room|participant>` signal.
+  _slot_message = node ~>
+    yield from $ @emit ('message-%s' % node.get 'type' 'chat') node
+
+  #: Dispatch a one-on-one chat message.
+  #:
+  #: _slot_message_chat :: Element -> coroutine a
+  #:
+  _slot_message_chat = node ~>
+    yield from $ @emit ('message-chat-%s' % node.get 'from') node
 
   #: Dispatch a presence.
   #:
   #: _slot_presence :: Element -> coroutine a
   #:
-  _slot_presence = asyncio.coroutine $ node ~>
-    # TODO emit the `presence-groupchat-<room>` signal.
+  _slot_presence = node ~>
     # TODO emit some authorization-related signals.
+    jid   = JabberID $ node.get 'from'
+    both  = jid.bare != jid.full
+    both &= yield from $ @emit ('presence-%s' % jid.bare) node
+    both => yield from $ @emit ('presence-%s' % jid.full) node
 
   #: Generate a random stanza ID.
   #:
