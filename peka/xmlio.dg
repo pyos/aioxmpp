@@ -88,13 +88,8 @@ XMLProtocol = subclass asyncio.streams.FlowControlMixin asyncio.Protocol where
     (super XMLProtocol self).connection_made transport
 
   data_received = data ~>
-    # Some servers tend to act like it's the start of the document
-    # in case of errors. ElementTree can't parse that.
-    if data.startswith b'<?' => data = data.partition b'?>' !! 2
-
     except err => @parser.feed data
            err :: Exception => @writer.close True
-
     for (ev, node) in @parser.read_events! => if
       ev == 'start' => @level += 1
       ev == 'end'   =>
