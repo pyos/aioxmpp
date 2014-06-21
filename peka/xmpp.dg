@@ -6,23 +6,59 @@ import '/asyncio'
 import 'xmlio'
 import 'xmlio/Node'
 
-NS_CLIENT = 'jabber:client'
-NS_STREAM = 'http://etherx.jabber.org/streams'
-NS_XML    = 'http://www.w3.org/XML/1998/namespace'
-NS_TLS    = 'urn:ietf:params:xml:ns:xmpp-tls'
-NS_SASL   = 'urn:ietf:params:xml:ns:xmpp-sasl'
-NS_BIND   = 'urn:ietf:params:xml:ns:xmpp-bind'
+NS_CLIENT  = 'jabber:client'
+NS_STREAM  = 'http://etherx.jabber.org/streams'
+NS_XML     = 'http://www.w3.org/XML/1998/namespace'
+NS_TLS     = 'urn:ietf:params:xml:ns:xmpp-tls'
+NS_SASL    = 'urn:ietf:params:xml:ns:xmpp-sasl'
+NS_BIND    = 'urn:ietf:params:xml:ns:xmpp-bind'
+NS_SESSION = 'urn:ietf:params:xml:ns:xmpp-session'
+NS_VERSION = 'jabber:iq:version'
+NS_PING    = 'jabber:iq:ping'
+
+
+XMPPError = subclass Exception where
+
+
+JabberID = subclass object where
+  __init__ = @host @user: None @resource: None ~>
+    if '@' in @host => @user, _, @host     = @host.partition '@'
+    if '/' in @host => @host, _, @resource = @host.partition '/'
+    None
+
+  bare = ~> '{}@{}'    .format @user @host
+  full = ~> '{}@{}/{}' .format @user @host @resource
 
 
 Client = subclass xmlio.XMLProtocol where
   __init__ = host loop: None ~>
+    @self = JabberID host
     @host = host
     @root = ' '.join $ list'
       'stream:stream xmlns="%s"' % NS_CLIENT
       'xmlns:xml="%s"'           % NS_XML
       'xmlns:stream="%s"'        % NS_STREAM
       'version="1.0" to="%s"'    % host
+    @_handles = set!
     (super Client self).__init__ root: @root loop: loop
+
+  #: Start a task bound to this connection.
+  #:
+  #: async :: coroutine a -> Task
+  #:
+  async = coro ~>
+    task = asyncio.async coro loop: @loop
+    task.add_done_callback $ task -> @_handles.remove task
+    @_handles.add task
+    task
+
+  #: Stop listening for stuff.
+  #:
+  #: close :: typeof XMLProtocol.close
+  #:
+  close = self ->
+    for handle in @_handles => handle.cancel!
+    (super Client self).close!
 
   #: Generate a random stanza ID.
   #:
@@ -35,10 +71,24 @@ Client = subclass xmlio.XMLProtocol where
   #: send_with_id :: (Either Node Element) -> coroutine Element
   #:
   send_with_id = node ~>
-    if node :: xmlio._Element => node.set 'id' (id = @randomid)
-       node :: xmlio.Node     => node.attrs !! 'id' = id = @randomid
+    node.set 'id' (id = @randomid)
     yield from $ @send node
-    fst $ yield from $ @wait_for $ '*[@id=%s]' % xmlio.quoteattr id
+
+    reply = fst $ yield from $ @wait_for xpath: True $
+      # Note that the node may be sent to ourselves; we should ignore it.
+      '*[@id=%s and @type!="get" and @type!="set"]' % xmlio.quoteattr id
+
+    if reply.get 'type' == 'error' => raise $ XMPPError reply
+       otherwise => reply
+
+  #: Respond to an `iq` node.
+  #:
+  #: respond :: Element (Either Node Element) -> coroutine a
+  #:
+  respond = req node ~>
+    node.set 'id' $ req.get 'id' ''
+    node.set 'to' $ req.get 'from'
+    yield from $ @send node
 
   #: XMPP handshake, part 1: `stream:features`.
   #:
@@ -72,6 +122,7 @@ Client = subclass xmlio.XMLProtocol where
     for x in mechanisms => if x.text in @auth.methods => use_auth = @auth.methods !! x.text
     if use_auth  => yield from $ use_auth self user password
        otherwise => raise $ ValueError 'no auth mechanism supported by both sides'
+    @self.user = user
     @connection_made @transport
     yield from @load_features
 
@@ -96,12 +147,22 @@ Client = subclass xmlio.XMLProtocol where
   #: bind :: str -> coroutine a
   #:
   bind = resource ~>
-    reply = yield from $ @send_with_id $ Node 'iq' type: 'set' $
-      Node 'bind' xmlns: NS_BIND $ Node 'resource' resource
+    @self.resource = resource
+    yield from $ @send_with_id $ Node 'iq' type: 'set' $ Node 'bind' xmlns: NS_BIND $ Node 'resource' resource
+    yield from $ @send_with_id $ Node 'iq' type: 'set' $ Node 'session' xmlns: NS_SESSION
 
-    if reply.get 'type' == 'result' => None
-       reply.get 'type' == 'error'  => raise $ Exception $ (reply.findall './/error').get 'code'
-       otherwise => raise $ ConnectionError 'incorrect iq type'
+    @async
+      where while True =>
+        req, = yield from $ @wait_for $ '{%s}iq[{%s}ping]' % (NS_CLIENT, NS_PING)
+        yield from $ @respond req $ Node 'iq' type: 'result'
+
+    @async
+      where while True =>
+        req, = yield from $ @wait_for $ '{%s}iq[{%s}query]' % (NS_CLIENT, NS_VERSION)
+        yield from $ @respond req $ Node 'iq' type: 'result' $ Node 'query' xmlns: NS_VERSION
+          Node 'name'    'asyncio.xmpp'
+          Node 'version' '0.0.0.0.0.1 pre-alpha'
+          Node 'os'      'unknown'
 
 
 client = user password host port: 5222 loop: None resource: None **: k ->
