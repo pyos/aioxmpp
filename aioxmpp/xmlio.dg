@@ -11,7 +11,7 @@ except
   err :: ImportError =>
     import '/xml/etree/ElementTree/tostring'
     import '/xml/etree/ElementTree/XMLPullParser'
-    _Element = import '/xml/etree/Element'
+    _Element = import '/xml/etree/ElementTree/Element'
 
 import 'events/EventSystem'
 
