@@ -244,7 +244,7 @@ Client = subclass xmlio.XMLProtocol where
 
   #: XMPP handshake, part 1: TLS.
   #:
-  #: starttls :: (Either SSLContext bool) -> coroutine a
+  #: starttls :: (Maybe SSLContext) -> coroutine a
   #:
   starttls = context ~>
     if @features.findall $ './{%s}starttls' % NS_TLS =>

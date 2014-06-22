@@ -30,7 +30,7 @@ init =
     #:
     self = False
 
-    #: True if this node is not the first one send from that address. Set in `room.enqueue`.
+    #: True if this node is not the first one sent from that address. Set in `room.enqueue`.
     #:
     #: known :: bool
     #:
