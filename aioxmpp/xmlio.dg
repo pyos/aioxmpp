@@ -4,14 +4,20 @@ import '/xml/sax/saxutils/quoteattr'
 
 except
   err =>
-    import '/lxml/etree/tostring'
-    import '/lxml/etree/XMLPullParser'
-    import '/lxml/etree/Element'
-    import '/lxml/etree/_Element'
+    import '/lxml/etree'
+    Element     = etree._Element
+    ElementBase = etree.ElementBase
+
+    _set_parser_element_class = parser cls ->
+      parser.set_element_class_lookup $ etree.ElementDefaultClassLookup cls
   err :: ImportError =>
-    import '/xml/etree/ElementTree/tostring'
-    import '/xml/etree/ElementTree/XMLPullParser'
-    _Element = import '/xml/etree/ElementTree/Element'
+    etree = import '/xml/etree/ElementTree'
+
+    Element     = etree.Element
+    ElementBase = etree.Element
+
+    _set_parser_element_class = parser cls ->
+      parser._parser._target = parser._parser.target = etree.TreeBuilder cls
 
 import 'events/EventSystem'
 
@@ -55,9 +61,9 @@ XMLWriter = subclass asyncio.StreamWriter where
   #:
   send = node ~>
     data = if
-      node :: _Element => tostring node encoding: 'unicode'
-      node :: Node     => str node
-      otherwise        => raise $ TypeError 'not an Element/Node'
+      node :: Element => etree.tostring node encoding: 'unicode'
+      node :: Node    => str node
+      otherwise       => raise $ TypeError 'not an Element/Node'
     @_protocol.log.debug 'SEND %s' data
     @write $ data.encode 'utf-8'
     @drain!
@@ -89,7 +95,9 @@ XMLProtocol = subclass EventSystem asyncio.streams.FlowControlMixin asyncio.Prot
     @level     = 0
     @transport = transport
     @writer    = XMLWriter @root transport self None @loop
-    @parser    = XMLPullParser ('start', 'end')
+    @parser    = etree.XMLPullParser ('start', 'end')
+    except err => _set_parser_element_class @parser @element_class
+           err :: AttributeError =>
     (super XMLProtocol self).connection_made transport
 
   data_received = data ~>
@@ -100,7 +108,7 @@ XMLProtocol = subclass EventSystem asyncio.streams.FlowControlMixin asyncio.Prot
       ev == 'end'   =>
         @level -= 1
         @level == 1 =>
-          @log.debug 'RECV %s' $ tostring node encoding: 'unicode'
+          @log.debug 'RECV %s' $ etree.tostring node encoding: 'unicode'
           @async $ @emit 'node' node
     (super XMLProtocol self).data_received data
 
