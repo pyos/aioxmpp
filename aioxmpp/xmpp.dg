@@ -97,6 +97,12 @@ XMPPPresence = subclass XMPPElement where
   #:
   type = ~> @get 'type' 'available'
 
+  #: A user-specified status string.
+  #:
+  #: status :: Maybe str
+  #:
+  status = ~> _maybe_text_of $ @findall $ './{%s}status' % NS_CLIENT
+
 
 JabberID = subclass object where
   __init__ = @host @user: None @resource: None ~>
