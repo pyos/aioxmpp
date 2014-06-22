@@ -71,14 +71,20 @@ XMPPElement = subclass object where
   #:
   type = ~> @get 'type'
 
+  #: When this stanza was sent. Unlike `time`, this is `None` if it was received instantly.
+  #:
+  #: delay :: Maybe datetime
+  #:
+  delay = ~>
+    node = @findall $ './{%s}delay' % NS_DELAY
+    if node      => datetime.strptime ((node !! 0).get 'stamp') '%Y-%m-%dT%H:%M:%SZ'
+       otherwise => None
+
   #: When this stanza was sent (not received.)
   #:
   #: time :: datetime
   #:
-  time = ~>
-    delay = @findall $ './{%s}delay' % NS_DELAY
-    if delay     => datetime.strptime ((delay !! 0).get 'stamp') '%Y-%m-%dT%H:%M:%SZ'
-       otherwise => @_time
+  time = ~> @delay or @_time
 
   ismessage  = ~> @tag == '{%s}message'  % NS_CLIENT
   ispresence = ~> @tag == '{%s}presence' % NS_CLIENT
