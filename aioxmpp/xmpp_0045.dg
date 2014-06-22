@@ -30,7 +30,7 @@ init = subclass object where
   #: _slot_message :: Element -> coroutine bool
   #:
   _slot_message = node ~>
-    yield from $ @proto.emit ('message-groupchat-%s' % (JabberID $ node.get 'from').bare) node
+    yield from $ @proto.emit ('message-groupchat-%s' % node.from.bare) node
 
   #: Enter a groupchat.
   #:
@@ -41,6 +41,7 @@ init = subclass object where
       room :: JabberID => JabberID room.bare None nick
       otherwise        => JabberID room      None nick
     room.bare in @entered => raise $ ValueError $ 'room {} already entered'.format room.bare
+    @entered.add room.bare
 
     node = Node 'x' xmlns: namespace
     not $ password is None => node.children.append $ Node 'password' password
@@ -49,10 +50,16 @@ init = subclass object where
 
     # If successful, the server does not send a response. Instead,
     # we need to listen for a non-`error` presence from this room.
-    resp = yield from $ @proto.wait_for $ 'presence-%s' % room.bare
-    resp.get 'type' == 'error' => raise $ XMPPError $ resp.findall ('{%s}error' % NS_CLIENT) !! 0
+    except
+      err =>
+        resp = yield from $ @proto.wait_for $ 'presence-%s' % room.bare
+        resp.type == 'error' => raise $ XMPPError resp
+      finally => err =>
+        @entered.remove room.bare
+        # XXX should we send an `unavailable` presence if `err` is not an `XMPPError`?
+
     room = Room self room @proto
-    yield from $ room._enqueue resp
+    room.enqueue $ resp.as MUCPresence
     room
 
 
@@ -66,26 +73,25 @@ Room = subclass object where
     @queue  = collections.deque ()
     @waiter = None
     @left   = False
-    @proto.connect ('presence-%s'          % @jid.bare) @_enqueue
-    @proto.connect ('message-groupchat-%s' % @jid.bare) @_enqueue
-    @ext.entered.add @jid.bare
+    @proto.connect ('presence-%s'          % @jid.bare) @onpresence
+    @proto.connect ('message-groupchat-%s' % @jid.bare) @onmessage
     None
+
+  onpresence = asyncio.coroutine $ x ~> @enqueue $ x.as MUCPresence
+  onmessage  = asyncio.coroutine $ x ~> @enqueue $ x.as MUCMessage
 
   #: Put the node onto the event queue and wake up those who wait for it.
   #:
-  #: _enqueue :: Element -> coroutine bool
+  #: enqueue :: Element -> bool
   #:
-  _enqueue = asyncio.coroutine $ node ~>
-    @queue.append $ node.as $ if
-      node.ismessage  => MUCMessage
-      node.ispresence => MUCPresence
-      otherwise       => MUCElement
+  enqueue = node ~>
+    @queue.append node
     @waiter => @waiter.set_result True
     @waiter = None
-    if node.get 'from' == @jid.full and node.get 'type' == 'unavailable' =>
+    if node :: MUCPresence and node.from.full == @jid.full and node.type == 'unavailable' =>
       @left = True
-      @proto.disconnect ('presence-%s'          % @jid.bare) @_enqueue
-      @proto.disconnect ('message-groupchat-%s' % @jid.bare) @_enqueue
+      @proto.disconnect ('presence-%s'          % @jid.bare) @onpresence
+      @proto.disconnect ('message-groupchat-%s' % @jid.bare) @onmessage
       @ext.entered.remove @jid.bare
     True
 

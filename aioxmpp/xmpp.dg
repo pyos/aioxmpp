@@ -24,16 +24,52 @@ _maybe_text_of = node -> if
 
 
 XMPPError = subclass Exception where
-  # TODO add some useful fields.
+  #: An `iq`/`presence`/`message` with a type of `error`.
+  #:
+  #: node  :: Maybe ElementBase -- the node that contains the error.
+  #: error :: Maybe ElementBase -- the `{jabber:client}error` element itself.
+  #:
+  __init__ = node: None ~>
+    @node  = node
+    @error = not $ node is None => node.findall ('{%s}error' % NS_CLIENT)
+    @error = head $ @error or list' None
+    (super XMPPError self).__init__ node
+
+  __str__ = self -> if
+    @error is None => 'unknown-error'
+    otherwise      => (@error !! 0).tag.rsplit '}' 1 !! -1
 
 
 XMPPElement = subclass xmlio.ElementBase where
-  as   = t ~> self where @__class__ = t
-  from =   ~> JabberID $ @get 'from'
-  to   =   ~> JabberID $ @get 'to'
-  id   =   ~> @get 'id'
-  type =   ~> @get 'type'
-  time =   ~>
+  #: Convert this stanza to a different type.
+  #:
+  #: as :: type -> ElementBase
+  #:
+  as = t ~> self where @__class__ = t
+
+  #: The sender of this stanza.
+  #:
+  #: from :: JabberID
+  #:
+  from = ~> JabberID $ @get 'from'
+
+  #: The unique ID assigned to this request/response.
+  #:
+  #: id :: Maybe str
+  #:
+  id = ~> @get 'id'
+
+  #: The type of this stanza: get, set, result, error.
+  #:
+  #: type :: Maybe str
+  #:
+  type = ~> @get 'type'
+
+  #: When this stanza was sent (not received.)
+  #:
+  #: time :: datetime
+  #:
+  time = ~>
     delay = @findall $ '{%s}delay' % NS_DELAY
     if delay     => datetime.strptime ((delay !! 0).get 'stamp') '%Y-%m-%dT%H:%M:%SZ'
        otherwise => @_time
@@ -49,7 +85,11 @@ XMPPMessage = subclass XMPPElement where
 
 
 XMPPPresence = subclass XMPPElement where
-  # ?????
+  #: The type of this presence: error, (un)available, dnd, busy, something else.
+  #:
+  #: type :: str
+  #:
+  type = ~> @get 'type' 'available'
 
 
 JabberID = subclass object where
@@ -58,12 +98,15 @@ JabberID = subclass object where
     if '/' in @host => @host, _, @resource = @host.partition '/'
     None
 
-  bare = ~> '{}@{}'    .format @user @host
-  full = ~> '{}@{}/{}' .format @user @host @resource
+  bare = ~> if
+    @user     => '{}@{}'.format @user @host
+    otherwise => @host
 
-  __str__ = self -> if
-    @resource => @full
+  full = ~> if
+    @resource => '{}@{}/{}'.format @user @host @resource
     otherwise => @bare
+
+  __str__ = self -> @full
 
 
 Client = subclass xmlio.XMLProtocol where
@@ -123,14 +166,14 @@ Client = subclass xmlio.XMLProtocol where
   #: _slot_message :: Element -> coroutine bool
   #:
   _slot_message = node ~>
-    yield from $ @emit ('message-%s' % node.get 'type' 'chat') node
+    yield from $ @emit ('message-%s' % node.type) node
 
   #: Dispatch a one-on-one chat message.
   #:
   #: _slot_message_chat :: Element -> coroutine bool
   #:
   _slot_message_chat = node ~>
-    yield from $ @emit ('message-chat-%s' % node.get 'from') node
+    yield from $ @emit ('message-chat-%s' % node.from) node
 
   #: Dispatch a presence.
   #:
@@ -138,7 +181,7 @@ Client = subclass xmlio.XMLProtocol where
   #:
   _slot_presence = node ~>
     # TODO emit some authorization-related signals.
-    jid   = JabberID $ node.get 'from'
+    jid   = node.from
     stop  = jid.bare == jid.full
     stop |= yield from (@emit ('presence-%s' % jid.bare) node)
     stop or yield from (@emit ('presence-%s' % jid.full) node)
@@ -159,9 +202,9 @@ Client = subclass xmlio.XMLProtocol where
 
     while True =>
       reply = yield from $ @wait_for 'response'
-      reply.get 'id' == id => break!
+      reply.id == id => break!
 
-    reply.get 'type' == 'error' => raise $ XMPPError $ reply.findall ('{%s}error' % NS_CLIENT) !! 0
+    reply.type == 'error' => raise $ XMPPError reply
     reply
 
   #: Respond to an `iq` node.
@@ -169,8 +212,8 @@ Client = subclass xmlio.XMLProtocol where
   #: respond :: Element (Either Node Element) -> coroutine a
   #:
   respond = req node ~>
-    node.set 'id' $ req.get 'id' ''
-    node.set 'to' $ req.get 'from'
+    node.set 'id' $ req.id or ''
+    node.set 'to' $ str req.from
     yield from $ @send node
 
   #: XMPP handshake, part 1: TLS.
