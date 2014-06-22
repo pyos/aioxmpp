@@ -2,6 +2,7 @@ import '/base64'
 import '/random'
 import '/string'
 import '/asyncio'
+import '/datetime/datetime'
 
 import 'xmlio'
 import 'xmlio/Node'
@@ -17,8 +18,38 @@ NS_STANZAS = 'urn:ietf:params:xml:ns:xmpp-stanzas'
 NS_DELAY   = 'urn:xmpp:delay'
 
 
+_maybe_text_of = node -> if
+  node      => (node !! 0).text
+  otherwise => None
+
+
 XMPPError = subclass Exception where
   # TODO add some useful fields.
+
+
+XMPPElement = subclass xmlio.ElementBase where
+  as   = t ~> self where @__class__ = t
+  from =   ~> JabberID $ @get 'from'
+  to   =   ~> JabberID $ @get 'to'
+  id   =   ~> @get 'id'
+  type =   ~> @get 'type'
+  time =   ~>
+    delay = @findall $ '{%s}delay' % NS_DELAY
+    if delay     => datetime.strptime ((delay !! 0).get 'stamp') '%Y-%m-%dT%H:%M:%SZ'
+       otherwise => @_time
+
+  ismessage  = ~> @tag == '{%s}message'  % NS_CLIENT
+  ispresence = ~> @tag == '{%s}presence' % NS_CLIENT
+  isiq       = ~> @tag == '{%s}iq'       % NS_CLIENT
+
+
+XMPPMessage = subclass XMPPElement where
+  body    = ~> _maybe_text_of $ @findall $ '{%s}body'    % NS_CLIENT
+  subject = ~> _maybe_text_of $ @findall $ '{%s}subject' % NS_CLIENT
+
+
+XMPPPresence = subclass XMPPElement where
+  # ?????
 
 
 JabberID = subclass object where
@@ -36,6 +67,8 @@ JabberID = subclass object where
 
 
 Client = subclass xmlio.XMLProtocol where
+  element_class = XMPPElement
+
   __init__ = host loop: None ~>
     @ext  = (subclass object)!
     @self = JabberID host
@@ -66,14 +99,15 @@ Client = subclass xmlio.XMLProtocol where
   #:
   #: _slot_node :: Element -> coroutine bool
   #:
-  _slot_node = asyncio.coroutine $ node ~> if
-    node.tag == '{%s}iq'       % NS_CLIENT => if
-      node.get 'type' == 'result' => yield from $ @emit 'response' node
-      node.get 'type' == 'error'  => yield from $ @emit 'response' node
-      otherwise                   => yield from $ @emit 'iq'       node
-    node.tag == '{%s}message'  % NS_CLIENT => yield from $ @emit 'message'  node
-    node.tag == '{%s}presence' % NS_CLIENT => yield from $ @emit 'presence' node
-    node.tag == '{%s}features' % NS_STREAM => yield from $ @emit 'ready' (@features = node)
+  _slot_node = asyncio.coroutine $ node ~>
+    node._time = datetime.utcnow!
+    if node.ismessage  => yield from $ @emit 'message'  $ node.as XMPPMessage
+       node.ispresence => yield from $ @emit 'presence' $ node.as XMPPPresence
+       node.isiq       => if
+         node.type == 'result' => yield from $ @emit 'response' node
+         node.type == 'error'  => yield from $ @emit 'response' node
+         otherwise             => yield from $ @emit 'iq'       node
+       node.tag == '{%s}features' % NS_STREAM => yield from $ @emit 'ready' (@features = node)
 
   #: Handle an `iq` request (by replying with an error.)
   #:

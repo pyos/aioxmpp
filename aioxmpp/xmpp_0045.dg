@@ -1,8 +1,8 @@
 import '/asyncio'
 import '/collections'
-import '/datetime/datetime'
 
 import 'xmlio/Node'
+import 'xmpp'
 import 'xmpp/JabberID'
 import 'xmpp/XMPPError'
 import 'xmpp/NS_CLIENT'
@@ -76,7 +76,10 @@ Room = subclass object where
   #: _enqueue :: Element -> coroutine bool
   #:
   _enqueue = asyncio.coroutine $ node ~>
-    @queue.append (node, datetime.utcnow!)
+    @queue.append $ node.as $ if
+      node.ismessage  => MUCMessage
+      node.ispresence => MUCPresence
+      otherwise       => MUCElement
     @waiter => @waiter.set_result True
     @waiter = None
     if node.get 'from' == @jid.full and node.get 'type' == 'unavailable' =>
@@ -94,9 +97,7 @@ Room = subclass object where
     while not @queue => yield from $
       @left   => raise GeneratorExit
       @waiter = @waiter or asyncio.Future loop: @proto.loop
-    node, ts = @queue.popleft!
-    if node.tag == '{%s}message'  % NS_CLIENT => MUCMessage  node ts
-       node.tag == '{%s}presence' % NS_CLIENT => MUCPresence node ts
+    @queue.popleft!
 
   #: Exit this MUC.
   #:
@@ -108,29 +109,13 @@ Room = subclass object where
     yield from $ @proto.send node
 
 
-maybe_text = node -> if
-  node      => (node !! 0).text
-  otherwise => None
+MUCElement = subclass xmpp.XMPPElement where
+  room = ~> @from.bare
+  nick = ~> @from.resource
 
 
-MUCNode = subclass object where
-  __init__ = @node @_time ~>
-  jid  = ~> JabberID $ @node.get 'from'
-  room = ~> @jid.bare
-  nick = ~> @jid.resource
-  time = ~>
-    delay = @node.findall $ '{%s}delay' % NS_DELAY
-    if delay     => datetime.strptime ((delay !! 0).get 'stamp') '%Y-%m-%dT%H:%M:%SZ'
-       otherwise => @_time
-
-
-MUCMessage = subclass MUCNode where
-  body    = ~> maybe_text $ @node.findall $ '{%s}body'    % NS_CLIENT
-  subject = ~> maybe_text $ @node.findall $ '{%s}subject' % NS_CLIENT
-
-
-MUCPresence = subclass MUCNode where
-  type        = ~> @node.get 'type' 'available'
+MUCMessage  = subclass MUCElement xmpp.XMPPMessage  where
+MUCPresence = subclass MUCElement xmpp.XMPPPresence where
   status      = ~> raise NotImplementedError
   affiliation = ~> raise NotImplementedError  # NOTE these may not appear
   role        = ~> raise NotImplementedError  #   in every `presence`.

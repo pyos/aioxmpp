@@ -1,4 +1,5 @@
 import 'xmlio/Node'
+import 'xmpp'
 
 
 name      = 'version'
@@ -30,12 +31,7 @@ init = self ->
   #:
   jid ->
     r = yield from $ @request $ Node 'iq' type: 'get' to: (str jid) $ Node 'query' xmlns: namespace
-
-    maybe_text = nodes -> if
-      nodes     => (head nodes).text
-      otherwise => 'unknown'
-
     tuple'
-      maybe_text $ r.findall $ '{%s}query/{%s}name'    % (namespace, namespace)
-      maybe_text $ r.findall $ '{%s}query/{%s}version' % (namespace, namespace)
-      maybe_text $ r.findall $ '{%s}query/{%s}os'      % (namespace, namespace)
+      xmpp._maybe_text_of $ r.findall $ '{%s}query/{%s}name'    % (namespace, namespace)
+      xmpp._maybe_text_of $ r.findall $ '{%s}query/{%s}version' % (namespace, namespace)
+      xmpp._maybe_text_of $ r.findall $ '{%s}query/{%s}os'      % (namespace, namespace)
