@@ -135,7 +135,7 @@ JabberID = subclass object where
 
 Client = subclass xmlio.XMLProtocol where
   __init__ = host loop: None ~>
-    @ext  = (subclass object)!
+    @ext  = subclass object where
     @self = JabberID host
     @host = host
     @root = ' '.join $ list'
