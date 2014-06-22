@@ -31,7 +31,7 @@ XMPPError = subclass Exception where
   #:
   __init__ = node: None ~>
     @node  = node
-    @error = not $ node is None => node.findall ('{%s}error' % NS_CLIENT)
+    @error = not $ node is None => node.findall ('./{%s}error' % NS_CLIENT)
     @error = head $ @error or list' None
     (super XMPPError self).__init__ node
 
@@ -40,7 +40,13 @@ XMPPError = subclass Exception where
     otherwise      => (@error !! 0).tag.rsplit '}' 1 !! -1
 
 
-XMPPElement = subclass xmlio.ElementBase where
+XMPPElement = subclass object where
+  __getattr__ = name ~> getattr @_node name
+  __init__    = node ~>
+    @_time = datetime.utcnow!
+    @_node = node
+    None
+
   #: Convert this stanza to a different type.
   #:
   #: as :: type -> ElementBase
@@ -70,7 +76,7 @@ XMPPElement = subclass xmlio.ElementBase where
   #: time :: datetime
   #:
   time = ~>
-    delay = @findall $ '{%s}delay' % NS_DELAY
+    delay = @findall $ './{%s}delay' % NS_DELAY
     if delay     => datetime.strptime ((delay !! 0).get 'stamp') '%Y-%m-%dT%H:%M:%SZ'
        otherwise => @_time
 
@@ -80,8 +86,8 @@ XMPPElement = subclass xmlio.ElementBase where
 
 
 XMPPMessage = subclass XMPPElement where
-  body    = ~> _maybe_text_of $ @findall $ '{%s}body'    % NS_CLIENT
-  subject = ~> _maybe_text_of $ @findall $ '{%s}subject' % NS_CLIENT
+  body    = ~> _maybe_text_of $ @findall $ './{%s}body'    % NS_CLIENT
+  subject = ~> _maybe_text_of $ @findall $ './{%s}subject' % NS_CLIENT
 
 
 XMPPPresence = subclass XMPPElement where
@@ -110,8 +116,6 @@ JabberID = subclass object where
 
 
 Client = subclass xmlio.XMLProtocol where
-  element_class = XMPPElement
-
   __init__ = host loop: None ~>
     @ext  = (subclass object)!
     @self = JabberID host
@@ -143,7 +147,7 @@ Client = subclass xmlio.XMLProtocol where
   #: _slot_node :: Element -> coroutine bool
   #:
   _slot_node = asyncio.coroutine $ node ~>
-    node._time = datetime.utcnow!
+    node = XMPPElement node
     if node.ismessage  => yield from $ @emit 'message'  $ node.as XMPPMessage
        node.ispresence => yield from $ @emit 'presence' $ node.as XMPPPresence
        node.isiq       => if
@@ -221,7 +225,7 @@ Client = subclass xmlio.XMLProtocol where
   #: starttls :: coroutine a
   #:
   starttls = ~>
-    if @features.findall $ '{%s}starttls' % NS_TLS =>
+    if @features.findall $ './{%s}starttls' % NS_TLS =>
       yield from $ @send $ Node 'starttls' xmlns: NS_TLS
 
       while True =>

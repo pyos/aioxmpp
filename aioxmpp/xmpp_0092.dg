@@ -17,7 +17,7 @@ platform = 'unknown'
 #:
 init = self ->
   @connect 'iq' $ node ->
-    sn = node.findall $ '{%s}query' % namespace
+    sn = node.findall $ './{%s}query' % namespace
     sn =>
       yield from $ @respond node $ Node 'iq' type: 'result' $ Node 'query' xmlns: namespace
         Node 'name'    software
@@ -32,6 +32,6 @@ init = self ->
   jid ->
     r = yield from $ @request $ Node 'iq' type: 'get' to: (str jid) $ Node 'query' xmlns: namespace
     tuple'
-      xmpp._maybe_text_of $ r.findall $ '{%s}query/{%s}name'    % (namespace, namespace)
-      xmpp._maybe_text_of $ r.findall $ '{%s}query/{%s}version' % (namespace, namespace)
-      xmpp._maybe_text_of $ r.findall $ '{%s}query/{%s}os'      % (namespace, namespace)
+      xmpp._maybe_text_of $ r.findall $ './{%s}query/{%s}name'    % (namespace, namespace)
+      xmpp._maybe_text_of $ r.findall $ './{%s}query/{%s}version' % (namespace, namespace)
+      xmpp._maybe_text_of $ r.findall $ './{%s}query/{%s}os'      % (namespace, namespace)

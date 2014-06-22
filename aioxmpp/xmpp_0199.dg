@@ -12,7 +12,7 @@ namespace = 'jabber:iq:ping'
 #:
 init = self ->
   @connect 'iq' $ node ->
-    sn = node.findall $ '{%s}ping' % namespace
+    sn = node.findall $ './{%s}ping' % namespace
     sn =>
       yield from $ @respond node $ Node 'iq' type: 'result'
       True

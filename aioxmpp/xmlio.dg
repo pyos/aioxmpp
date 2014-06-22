@@ -5,19 +5,10 @@ import '/xml/sax/saxutils/quoteattr'
 except
   err =>
     import '/lxml/etree'
-    Element     = etree._Element
-    ElementBase = etree.ElementBase
-
-    _set_parser_element_class = parser cls ->
-      parser.set_element_class_lookup $ etree.ElementDefaultClassLookup cls
+    Element = etree._Element
   err :: ImportError =>
     etree = import '/xml/etree/ElementTree'
-
-    Element     = etree.Element
-    ElementBase = etree.Element
-
-    _set_parser_element_class = parser cls ->
-      parser._parser._target = parser._parser.target = etree.TreeBuilder cls
+    Element = etree.Element
 
 import 'events/EventSystem'
 
@@ -96,8 +87,6 @@ XMLProtocol = subclass EventSystem asyncio.streams.FlowControlMixin asyncio.Prot
     @transport = transport
     @writer    = XMLWriter @root transport self None @loop
     @parser    = etree.XMLPullParser ('start', 'end')
-    except err => _set_parser_element_class @parser @element_class
-           err :: AttributeError =>
     (super XMLProtocol self).connection_made transport
 
   data_received = data ~>
