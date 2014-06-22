@@ -17,7 +17,7 @@ EventSystem = subclass object where
 
   #: Start a task bound to this system.
   #:
-  #: async :: coroutine a -> Task
+  #: async :: (coroutine a) -> Task
   #:
   async = coro ~>
     task = asyncio.async coro loop: @loop
@@ -26,6 +26,16 @@ EventSystem = subclass object where
       err :: KeyError =>
     @tasks.add task
     task
+
+  #: Cancel a task bound to this system after some time.
+  #:
+  #: timelimit :: float (coroutine a) -> coroutine a
+  #:
+  timelimit = timeout coro ~>
+    task   = @async coro
+    handle = @loop.call_later timeout task.cancel
+    except _       => yield from task
+           finally => handle.cancel!
 
   #: Stop all tasks bound to this system.
   #:
