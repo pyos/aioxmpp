@@ -21,20 +21,9 @@ init = subclass object where
   __init__ = @proto ~>
     # @proto.extend $ import 'xmpp_0030'
     # ...
-    @proto.connect 'message-chat'      priority: 998 @_slot_private
     @proto.connect 'message-groupchat' priority: 999 @_slot_message
     @entered = set!
     None
-
-  #: Dispatch a private MUC message.
-  #:
-  #: _slot_private :: XMPPElement -> coroutine bool
-  #:
-  _slot_private = node ~>
-    node.from.bare in @entered =>
-      node = node.as MUCMessage
-      node.private = True
-      yield from $ @proto.emit ('message-groupchat-%s' % node.from.bare) node
 
   #: Dispatch a MUC message.
   #:
@@ -80,6 +69,7 @@ Room = subclass object where
     @left   = False
     @roster = dict!
     @proto.connect ('presence-%s'          % @jid.bare) @onpresence
+    @proto.connect ('message-chat-%s'      % @jid.bare) @onmessage
     @proto.connect ('message-groupchat-%s' % @jid.bare) @onmessage
     None
 
@@ -104,6 +94,7 @@ Room = subclass object where
       node.self and node.type in ('unavailable', 'error') =>
         @left = True
         @proto.disconnect ('presence-%s'          % @jid.bare) @onpresence
+        @proto.disconnect ('message-chat-%s'      % @jid.bare) @onmessage
         @proto.disconnect ('message-groupchat-%s' % @jid.bare) @onmessage
         @ext.entered.remove @jid.bare
 
@@ -137,7 +128,10 @@ MUCElement = subclass xmpp.XMPPElement where
   nick = ~> @from.resource
 
 
-MUCMessage  = subclass MUCElement xmpp.XMPPMessage  where private = False
+MUCMessage = subclass MUCElement xmpp.XMPPMessage where
+  private = ~> @type != 'groupchat'
+
+
 MUCPresence = subclass MUCElement xmpp.XMPPPresence where
   status      = ~> raise NotImplementedError
   affiliation = ~> raise NotImplementedError  # NOTE these may not appear

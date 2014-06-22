@@ -177,7 +177,10 @@ Client = subclass xmlio.XMLProtocol where
   #: _slot_message_chat :: Element -> coroutine bool
   #:
   _slot_message_chat = node ~>
-    yield from $ @emit ('message-chat-%s' % node.from) node
+    jid   = node.from
+    stop  = jid.bare == jid.full
+    stop |= yield from (@emit ('message-chat-%s' % jid.bare) node)
+    stop or yield from (@emit ('message-chat-%s' % jid.full) node)
 
   #: Dispatch a presence.
   #:
