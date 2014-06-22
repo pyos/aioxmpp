@@ -48,19 +48,11 @@ init = subclass object where
     not $ history  is None => node.children.append $ Node 'history' maxstanzas: (str history)
     yield from $ @proto.send $ Node 'presence' id: @proto.randomid to: room.full node
 
+    task = Room self room @proto
     # If successful, the server does not send a response. Instead,
-    # we need to listen for a non-`error` presence from this room.
-    except
-      err =>
-        resp = yield from $ @proto.wait_for $ 'presence-%s' % room.bare
-        resp.type == 'error' => raise $ XMPPError resp
-      finally => err =>
-        @entered.remove room.bare
-        # XXX should we send an `unavailable` presence if `err` is not an `XMPPError`?
-
-    room = Room self room @proto
-    room.enqueue $ resp.as MUCPresence
-    room
+    # we need to listen for a non-`error` node from this room.
+    task.enqueue $ yield from task
+    task
 
 
 Room = subclass object where
@@ -80,6 +72,12 @@ Room = subclass object where
   onpresence = asyncio.coroutine $ x ~> @enqueue $ x.as MUCPresence
   onmessage  = asyncio.coroutine $ x ~> @enqueue $ x.as MUCMessage
 
+  #: Whether waiting on this room is of any use.
+  #:
+  #: ok :: bool
+  #:
+  ok = ~> bool @queue or not @left
+
   #: Put the node onto the event queue and wake up those who wait for it.
   #:
   #: enqueue :: Element -> bool
@@ -88,22 +86,22 @@ Room = subclass object where
     @queue.append node
     @waiter => @waiter.set_result True
     @waiter = None
-    if node :: MUCPresence and node.from.full == @jid.full and node.type == 'unavailable' =>
+    node :: MUCPresence and node.nick == @jid.resource and node.type in ('unavailable', 'error') =>
       @left = True
       @proto.disconnect ('presence-%s'          % @jid.bare) @onpresence
       @proto.disconnect ('message-groupchat-%s' % @jid.bare) @onmessage
       @ext.entered.remove @jid.bare
-    True
+    False
 
   #: Fetch the next item from the queue. If there is none, wait until one is received.
   #:
   #: __iter__ :: -> coroutine MUCNode
   #:
   __iter__ = self ->
-    while not @queue => yield from $
-      @left   => raise GeneratorExit
-      @waiter = @waiter or asyncio.Future loop: @proto.loop
-    @queue.popleft!
+    while not @queue => yield from $ @waiter or (@waiter = asyncio.Future loop: @proto.loop)
+    resp = @queue.popleft!
+    resp :: MUCPresence and resp.type == 'error' => raise $ XMPPError resp
+    resp
 
   #: Exit this MUC.
   #:
