@@ -115,7 +115,7 @@ init =
           @proto.disconnect ('presence-%s'          % @jid.bare) @onpresence
           @proto.disconnect ('message-chat-%s'      % @jid.bare) @onmessage
           @proto.disconnect ('message-groupchat-%s' % @jid.bare) @onmessage
-          @proto.muc.entered.remove @jid.bare
+          @proto.ext.muc.entered.remove @jid.bare
 
       @queue.append node
       @waiter => @waiter.set_result True
