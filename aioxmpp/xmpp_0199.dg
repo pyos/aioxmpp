@@ -1,27 +1,26 @@
-import '/time'
-import 'xmlio/Node'
+init =
+  import '/time'
+  import 'xmlio/Node'
+
+  NS = 'jabber:iq:ping'
 
 
-name      = 'ping'
-namespace = 'jabber:iq:ping'
-
-
-#: XEP-0199: XMPP Ping
-#:
-#: http://xmpp.org/extensions/xep-0199.html
-#:
-init = self ->
-  @connect 'iq' $ node ->
-    sn = node.findall $ './{%s}ping' % namespace
-    sn =>
-      yield from $ @respond node $ Node 'iq' type: 'result'
-      True
-
-  #: Ping someone, return the time it took to do so.
+  #: XEP-0199: XMPP Ping
   #:
-  #: ping :: (Either JabberID str) -> coroutine float
+  #: http://xmpp.org/extensions/xep-0199.html
   #:
-  target ->
-    start = time.perf_counter!
-    yield from $ @request $ Node 'iq' to: (str target) type: 'get' $ Node 'ping' xmlns: namespace
-    time.perf_counter! - start
+  ping = self ->
+    @connect 'iq' $ node ->
+      sn = node.findall $ './{%s}ping' % NS
+      sn =>
+        yield from $ @respond node $ Node 'iq' type: 'result'
+        True
+
+    #: Ping someone, return the time it took to do so.
+    #:
+    #: ping :: (Either JabberID str) -> coroutine float
+    #:
+    target ->
+      start = time.perf_counter!
+      yield from $ @request $ Node 'iq' to: (str target) type: 'get' $ Node 'ping' xmlns: NS
+      time.perf_counter! - start

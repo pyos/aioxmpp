@@ -103,6 +103,12 @@ XMPPPresence = subclass XMPPElement where
   #:
   status = ~> _maybe_text_of $ @findall $ './{%s}status' % NS_CLIENT
 
+  #: Whether the entity that sent this node is still available.
+  #:
+  #: online :: bool
+  #:
+  online = ~> @type != 'unavailable'
+
 
 JabberID = subclass object where
   __init__ = @host @user: None @resource: None ~>
@@ -146,7 +152,8 @@ Client = subclass xmlio.XMLProtocol where
   #:
   #: extend :: ModuleType -> a
   #:
-  extend = module ~> not $ hasattr @ext module.name => setattr @ext module.name $ module.init self
+  extend = module ~> not $ hasattr @ext module.init.__name__ =>
+    setattr @ext module.init.__name__ $ module.init self
 
   #: Handle an arbitrary stanza.
   #:

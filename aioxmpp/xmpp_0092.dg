@@ -1,37 +1,40 @@
-import 'xmlio/Node'
-import 'xmpp'
+init =
+  import 'xmpp'
+  import 'xmlio/Node'
+
+  NS = 'jabber:iq:version'
 
 
-name      = 'version'
-namespace = 'jabber:iq:version'
-
-
-software = 'asyncio.xmpp'
-version  = '0.0.0.0.0.1 pre-alpha'
-platform = 'unknown'
-
-
-#: XEP-0092: Software Version
-#:
-#: http://xmpp.org/extensions/xep-0092.html
-#:
-init = self ->
-  @connect 'iq' $ node ->
-    sn = node.findall $ './{%s}query' % namespace
-    sn =>
-      yield from $ @respond node $ Node 'iq' type: 'result' $ Node 'query' xmlns: namespace
-        Node 'name'    software
-        Node 'version' version
-        Node 'os'      platform
-      True
-  
-  #: Retrieve the software version of some node as a (software, version, platform) tuple.
+  #: XEP-0092: Software Version
   #:
-  #: version :: (Either JabberID str) -> (str, str, str)
+  #: http://xmpp.org/extensions/xep-0092.html
   #:
-  jid ->
-    r = yield from $ @request $ Node 'iq' type: 'get' to: (str jid) $ Node 'query' xmlns: namespace
-    tuple'
-      xmpp._maybe_text_of $ r.findall $ './{%s}query/{%s}name'    % (namespace, namespace)
-      xmpp._maybe_text_of $ r.findall $ './{%s}query/{%s}version' % (namespace, namespace)
-      xmpp._maybe_text_of $ r.findall $ './{%s}query/{%s}os'      % (namespace, namespace)
+  version = self ->
+    @connect 'iq' $ node ->
+      sn = node.findall $ './{%s}query' % NS
+      sn =>
+        yield from $ @respond node $ Node 'iq' type: 'result' $ Node 'query' xmlns: NS
+          Node 'name'    _f.name
+          Node 'version' _f.version
+          Node 'os'      _f.os
+        True
+    
+    #: Retrieve the software version of some node as a (software, version, platform) tuple.
+    #:
+    #: version :: (Either JabberID str) -> (str, str, str)
+    #:
+    _f = jid ->
+      r = yield from $ @request $ Node 'iq' type: 'get' to: (str jid) $ Node 'query' xmlns: NS
+      tuple'
+        xmpp._maybe_text_of $ r.findall $ './{%s}query/{%s}name'    % (NS, NS)
+        xmpp._maybe_text_of $ r.findall $ './{%s}query/{%s}version' % (NS, NS)
+        xmpp._maybe_text_of $ r.findall $ './{%s}query/{%s}os'      % (NS, NS)
+
+    #: What to reply to XEP-0092 request with.
+    #:
+    #: name, version, os :: str
+    #:
+    _f.name    = 'aioxmpp'
+    _f.version = '1'
+    _f.os      = 'unknown'
+    _f

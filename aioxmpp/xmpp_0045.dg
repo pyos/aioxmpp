@@ -1,143 +1,178 @@
-import '/asyncio'
-import '/collections'
+init =
+  import '/asyncio'
+  import '/collections'
 
-import 'xmlio/Node'
-import 'xmpp'
-import 'xmpp/JabberID'
-import 'xmpp/XMPPError'
+  import 'xmpp'
+  import 'xmpp/JabberID'
+  import 'xmpp/XMPPError'
+  import 'xmlio/Node'
+
+  NS      = 'http://jabber.org/protocol/muc'
+  NS_USER = 'http://jabber.org/protocol/muc#user'
 
 
-NS      = 'http://jabber.org/protocol/muc'
-NS_USER = 'http://jabber.org/protocol/muc#user'
+  MUCElement = subclass xmpp.XMPPElement where
+    #: The name of the MUC this stanza was sent to.
+    #:
+    #: room :: str
+    #:
+    room = ~> @from.bare
+
+    #: The occupant that sent this stanza. `None` if it was server-generated.
+    #:
+    #: nick :: Maybe str
+    #:
+    nick = ~> @from.resource
+
+    #: Whether this node was sent by ourselves. Set in `Room.enqueue`.
+    #:
+    #: self :: bool
+    #:
+    self = False
+
+    #: True if this node is not the first one send from that address. Set in `room.enqueue`.
+    #:
+    #: known :: bool
+    #:
+    known = False
 
 
-name = 'muc'
-init = subclass object where
+  MUCMessage = subclass MUCElement xmpp.XMPPMessage where
+    #: Whether this message was private, i.e. not broadcast to others in the groupchat.
+    #:
+    #: private :: bool
+    #:
+    private = ~> @type != 'groupchat'
+
+
+  MUCPresence = subclass MUCElement xmpp.XMPPPresence where
+    #: Groupchat 1.0 protocol extra data.
+    #:
+    #: mucdata :: Element
+    #:
+    mucdata = ~> head $ @findall $ './{%s}x/{%s}item' % (NS_USER, NS_USER)
+
+    #: Affiliation: owner, admin, member, outcast (i.e. banned), none.
+    #:
+    #: affiliation :: str
+    #:
+    affiliation = ~> @mucdata.get 'affiliation'
+
+    #: Role: moderator, participant, visitor.
+    #:
+    #: role :: str
+    #:
+    role = ~> @mucdata.get 'role'
+
+    #: In non-anonymous rooms or when logged in as a moderator of a room, this points
+    #: to the actual XMPP entity that sent this presence.
+    #:
+    #: real_jid :: Maybe JabberID
+    #:
+    real_jid = ~>
+      x = @mucdata.get 'jid'
+      x and JabberID x
+
+
+  Room = subclass object where
+    #: A single multi-user chat.
+    #:
+    #: jid    :: JabberID
+    #: proto  :: Client
+    #: roster :: dict str MUCPresence
+    #:
+    __init__ = @proto @jid ~>
+      @queue  = collections.deque ()
+      @waiter = None
+      @left   = False
+      @roster = dict' (@jid.resource, (None, None, None, None, @proto.self))
+      @proto.connect ('presence-%s'          % @jid.bare) @onpresence
+      @proto.connect ('message-chat-%s'      % @jid.bare) @onmessage
+      @proto.connect ('message-groupchat-%s' % @jid.bare) @onmessage
+      None
+
+    onpresence = asyncio.coroutine $ x ~> @enqueue $ x.as MUCPresence
+    onmessage  = asyncio.coroutine $ x ~> @enqueue $ x.as MUCMessage
+
+    #: Whether waiting on this room is of any use.
+    #:
+    #: ok :: bool
+    #:
+    ok = ~> bool @queue or not @left
+
+    #: Put the node onto the event queue and wake up those who wait for it.
+    #:
+    #: enqueue :: MUCElement -> bool
+    #:
+    enqueue = node ~>
+      node.self  = node.nick == @jid.resource
+      node.known = node.nick in @roster
+      node :: MUCPresence =>
+        node.known  => @roster !!~ node.nick
+        node.online => @roster !!  node.nick = node
+        node.self and not node.online =>
+          @left = True
+          @proto.disconnect ('presence-%s'          % @jid.bare) @onpresence
+          @proto.disconnect ('message-chat-%s'      % @jid.bare) @onmessage
+          @proto.disconnect ('message-groupchat-%s' % @jid.bare) @onmessage
+          @proto.muc.entered.remove @jid.bare
+
+      @queue.append node
+      @waiter => @waiter.set_result True
+      @waiter = None
+      False
+
+    #: Fetch the next item from the queue. If there is none, wait until one is received.
+    #:
+    #: __iter__ :: -> coroutine MUCNode
+    #:
+    __iter__ = self ->
+      while not @queue => yield from $ @waiter or (@waiter = asyncio.Future loop: @proto.loop)
+      resp = @queue.popleft!
+      resp :: MUCPresence and resp.type == 'error' => raise $ XMPPError resp
+      resp
+
+    #: Exit this MUC.
+    #:
+    #: exit :: (Optional str) -> coroutine a
+    #:
+    exit = reason: '' ~>
+      yield from $ @proto.send $ Node 'presence' to: @jid.full type: 'unavailable' $
+        reason and Node 'status' reason
+
+
   #: XEP-0045: Multi-User Chat
   #:
   #: http://xmpp.org/extensions/xep-0045.html
   #:
-  __init__ = @proto ~>
-    # @proto.extend $ import 'xmpp_0030'
-    # ...
-    @proto.connect 'message-groupchat' priority: 999 @_slot_message
-    @entered = set!
-    None
+  muc = self ->
+    @connect 'message-groupchat' priority: 999 $ node ->
+      yield from $ @emit ('message-groupchat-%s' % node.from.bare) node
 
-  #: Dispatch a MUC message.
-  #:
-  #: _slot_message :: XMPPElement -> coroutine bool
-  #:
-  _slot_message = node ~>
-    yield from $ @proto.emit ('message-groupchat-%s' % node.from.bare) node
+    #: Enter a groupchat.
+    #:
+    #: muc :: JabberID (Optional str) (Optional int) -> coroutine Room
+    #:
+    _f = room password: None history: None ->
+      room.bare in _f.entered => raise $ ValueError $ 'room {} already entered'.format room.bare
+      room.resource is None   => raise $ ValueError $ 'no nickname in {}'.format room.bare
+      _f.entered.add room.bare
 
-  #: Enter a groupchat.
-  #:
-  #: () :: (Either JabberID str) (Optional str) (Optional int) -> coroutine Room
-  #:
-  __call__ = room nick password: None history: None ~>
-    room = if
-      room :: JabberID => JabberID room.bare None nick
-      otherwise        => JabberID room      None nick
-    room.bare in @entered => raise $ ValueError $ 'room {} already entered'.format room.bare
-    @entered.add room.bare
+      node = Node 'x' xmlns: NS
+      not $ password is None => node.children.append $ Node 'password' password
+      not $ history  is None => node.children.append $ Node 'history' maxstanzas: (str history)
+      yield from $ @send $ Node 'presence' id: @randomid to: room.full node
 
-    node = Node 'x' xmlns: NS
-    not $ password is None => node.children.append $ Node 'password' password
-    not $ history  is None => node.children.append $ Node 'history' maxstanzas: (str history)
-    yield from $ @proto.send $ Node 'presence' id: @proto.randomid to: room.full node
+      task = Room self room
+      # If successful, the server does not send a response. Instead,
+      # we need to listen for a non-`error` node from this room.
+      task.enqueue $ yield from task
+      task
 
-    task = Room self room @proto
-    # If successful, the server does not send a response. Instead,
-    # we need to listen for a non-`error` node from this room.
-    task.enqueue $ yield from task
-    task
-
-
-Room = subclass object where
-  #: A single multi-user chat.
-  #:
-  #: jid    :: JabberID
-  #: proto  :: Client
-  #: roster :: dict str (str, str, str, str, JabberID)
-  #:        -- maps nicknames to `(type, status, affiliation, role, real_jid)` tuples.
-  #:
-  __init__ = @ext @jid @proto ~>
-    @queue  = collections.deque ()
-    @waiter = None
-    @left   = False
-    @roster = dict' (@jid.resource, (None, None, None, None, @proto.self))
-    @proto.connect ('presence-%s'          % @jid.bare) @onpresence
-    @proto.connect ('message-chat-%s'      % @jid.bare) @onmessage
-    @proto.connect ('message-groupchat-%s' % @jid.bare) @onmessage
-    None
-
-  onpresence = asyncio.coroutine $ x ~> @enqueue $ x.as MUCPresence
-  onmessage  = asyncio.coroutine $ x ~> @enqueue $ x.as MUCMessage
-
-  #: Whether waiting on this room is of any use.
-  #:
-  #: ok :: bool
-  #:
-  ok = ~> bool @queue or not @left
-
-  #: Put the node onto the event queue and wake up those who wait for it.
-  #:
-  #: enqueue :: Element -> bool
-  #:
-  enqueue = node ~>
-    node.self = node.nick == @jid.resource
-    node :: MUCPresence =>
-      if node.type == 'unavailable' => @roster.pop node.nick
-         otherwise =>
-           _, _, a, b, c = @roster.get node.nick (None, None, None, None, None)
-           @roster !! node.nick = node.type, node.status, node.affiliation or a, node.role or b,
-             if node.real_jid => JabberID node.real_jid
-                otherwise     => c
-
-      node.self and node.type in ('unavailable', 'error') =>
-        @left = True
-        @proto.disconnect ('presence-%s'          % @jid.bare) @onpresence
-        @proto.disconnect ('message-chat-%s'      % @jid.bare) @onmessage
-        @proto.disconnect ('message-groupchat-%s' % @jid.bare) @onmessage
-        @ext.entered.remove @jid.bare
-
-    @queue.append node
-    @waiter => @waiter.set_result True
-    @waiter = None
-    False
-
-  #: Fetch the next item from the queue. If there is none, wait until one is received.
-  #:
-  #: __iter__ :: -> coroutine MUCNode
-  #:
-  __iter__ = self ->
-    while not @queue => yield from $ @waiter or (@waiter = asyncio.Future loop: @proto.loop)
-    resp = @queue.popleft!
-    resp :: MUCPresence and resp.type == 'error' => raise $ XMPPError resp
-    resp
-
-  #: Exit this MUC.
-  #:
-  #: exit :: (Optional str) -> coroutine a
-  #:
-  exit = reason: None ~>
-    node = Node 'presence' to: @jid.full type: 'unavailable'
-    reason => node.children.append $ Node 'status' reason
-    yield from $ @proto.send node
-
-
-MUCElement = subclass xmpp.XMPPElement where
-  room = ~> @from.bare
-  nick = ~> @from.resource
-
-
-MUCMessage = subclass MUCElement xmpp.XMPPMessage where
-  private = ~> @type != 'groupchat'
-
-
-MUCPresence = subclass MUCElement xmpp.XMPPPresence where
-  mucdata     = ~> head $ @findall $ './{%s}x/{%s}item' % (NS_USER, NS_USER)
-  affiliation = ~> @mucdata.get 'affiliation'
-  role        = ~> @mucdata.get 'role'
-  real_jid    = ~> @mucdata.get 'jid'
+    #: A set of rooms that have been entered but not left earlier.
+    #: This does not map to `Room` objects to avoid circular references.
+    #:
+    #: entered :: set str
+    #:
+    _f.entered = set!
+    _f
