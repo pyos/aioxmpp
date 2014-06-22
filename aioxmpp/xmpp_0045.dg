@@ -21,13 +21,24 @@ init = subclass object where
   __init__ = @proto ~>
     # @proto.extend $ import 'xmpp_0030'
     # ...
+    @proto.connect 'message-chat'      priority: 998 @_slot_private
     @proto.connect 'message-groupchat' priority: 999 @_slot_message
     @entered = set!
     None
 
+  #: Dispatch a private MUC message.
+  #:
+  #: _slot_private :: XMPPElement -> coroutine bool
+  #:
+  _slot_private = node ~>
+    node.from.bare in @entered =>
+      node = node.as MUCMessage
+      node.private = True
+      yield from $ @proto.emit ('message-groupchat-%s' % node.from.bare) node
+
   #: Dispatch a MUC message.
   #:
-  #: _slot_message :: Element -> coroutine bool
+  #: _slot_message :: XMPPElement -> coroutine bool
   #:
   _slot_message = node ~>
     yield from $ @proto.emit ('message-groupchat-%s' % node.from.bare) node
@@ -58,13 +69,16 @@ init = subclass object where
 Room = subclass object where
   #: A single multi-user chat.
   #:
-  #: jid   :: JabberID
-  #: proto :: Client
+  #: jid    :: JabberID
+  #: proto  :: Client
+  #: roster :: dict str (str, str, str, JabberID)
+  #:        -- maps nicknames to `(status, affiliation, role, real_jid)` tuples.
   #:
   __init__ = @ext @jid @proto ~>
     @queue  = collections.deque ()
     @waiter = None
     @left   = False
+    @roster = dict!
     @proto.connect ('presence-%s'          % @jid.bare) @onpresence
     @proto.connect ('message-groupchat-%s' % @jid.bare) @onmessage
     None
@@ -83,14 +97,19 @@ Room = subclass object where
   #: enqueue :: Element -> bool
   #:
   enqueue = node ~>
+    node.self = node.nick == @jid.resource
+    node :: MUCPresence =>
+      # TODO update the roster.
+
+      node.self and node.type in ('unavailable', 'error') =>
+        @left = True
+        @proto.disconnect ('presence-%s'          % @jid.bare) @onpresence
+        @proto.disconnect ('message-groupchat-%s' % @jid.bare) @onmessage
+        @ext.entered.remove @jid.bare
+
     @queue.append node
     @waiter => @waiter.set_result True
     @waiter = None
-    node :: MUCPresence and node.nick == @jid.resource and node.type in ('unavailable', 'error') =>
-      @left = True
-      @proto.disconnect ('presence-%s'          % @jid.bare) @onpresence
-      @proto.disconnect ('message-groupchat-%s' % @jid.bare) @onmessage
-      @ext.entered.remove @jid.bare
     False
 
   #: Fetch the next item from the queue. If there is none, wait until one is received.
@@ -118,8 +137,9 @@ MUCElement = subclass xmpp.XMPPElement where
   nick = ~> @from.resource
 
 
-MUCMessage  = subclass MUCElement xmpp.XMPPMessage  where
+MUCMessage  = subclass MUCElement xmpp.XMPPMessage  where private = False
 MUCPresence = subclass MUCElement xmpp.XMPPPresence where
   status      = ~> raise NotImplementedError
   affiliation = ~> raise NotImplementedError  # NOTE these may not appear
   role        = ~> raise NotImplementedError  #   in every `presence`.
+  real_jid    = ~> raise NotImplementedError
