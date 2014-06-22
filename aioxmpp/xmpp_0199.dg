@@ -1,5 +1,6 @@
 init =
   import '/time'
+  import '/asyncio'
   import 'xmlio/Node'
 
   NS = 'jabber:iq:ping'
@@ -20,7 +21,21 @@ init =
     #:
     #: ping :: (Either JabberID str) -> coroutine float
     #:
-    target ->
+    _f = target ->
       start = time.perf_counter!
       yield from $ @request $ Node 'iq' to: (str target) type: 'get' $ Node 'ping' xmlns: NS
       time.perf_counter! - start
+
+
+    #: Continuously ping a target with a timeout, cancel when cannot do so.
+    #:
+    #: ping.continuous :: (Either JabberID str) float float -> coroutine a
+    #:
+    _f.continuous = target timeout interval ->
+      yield from $ @async
+        # `@async` is used to ensure that this task is cancelled automatically
+        # when `connection_lost` is called.
+        where while True =>
+          yield from $ @timelimit timeout $ _f target
+          yield from $ asyncio.sleep interval loop: @loop
+    _f
