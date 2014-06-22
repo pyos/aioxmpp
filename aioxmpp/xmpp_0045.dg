@@ -5,14 +5,13 @@ import 'xmlio/Node'
 import 'xmpp'
 import 'xmpp/JabberID'
 import 'xmpp/XMPPError'
-import 'xmpp/NS_CLIENT'
-import 'xmpp/NS_DELAY'
 
 
-name      = 'muc'
-namespace = 'http://jabber.org/protocol/muc'
+NS      = 'http://jabber.org/protocol/muc'
+NS_USER = 'http://jabber.org/protocol/muc#user'
 
 
+name = 'muc'
 init = subclass object where
   #: XEP-0045: Multi-User Chat
   #:
@@ -43,7 +42,7 @@ init = subclass object where
     room.bare in @entered => raise $ ValueError $ 'room {} already entered'.format room.bare
     @entered.add room.bare
 
-    node = Node 'x' xmlns: namespace
+    node = Node 'x' xmlns: NS
     not $ password is None => node.children.append $ Node 'password' password
     not $ history  is None => node.children.append $ Node 'history' maxstanzas: (str history)
     yield from $ @proto.send $ Node 'presence' id: @proto.randomid to: room.full node
@@ -60,14 +59,14 @@ Room = subclass object where
   #:
   #: jid    :: JabberID
   #: proto  :: Client
-  #: roster :: dict str (str, str, str, JabberID)
-  #:        -- maps nicknames to `(status, affiliation, role, real_jid)` tuples.
+  #: roster :: dict str (str, str, str, str, JabberID)
+  #:        -- maps nicknames to `(type, status, affiliation, role, real_jid)` tuples.
   #:
   __init__ = @ext @jid @proto ~>
     @queue  = collections.deque ()
     @waiter = None
     @left   = False
-    @roster = dict!
+    @roster = dict' (@jid.resource, (None, None, None, None, @proto.self))
     @proto.connect ('presence-%s'          % @jid.bare) @onpresence
     @proto.connect ('message-chat-%s'      % @jid.bare) @onmessage
     @proto.connect ('message-groupchat-%s' % @jid.bare) @onmessage
@@ -89,7 +88,12 @@ Room = subclass object where
   enqueue = node ~>
     node.self = node.nick == @jid.resource
     node :: MUCPresence =>
-      # TODO update the roster.
+      if node.type == 'unavailable' => @roster.pop node.nick
+         otherwise =>
+           _, _, a, b, c = @roster.get node.nick (None, None, None, None, None)
+           @roster !! node.nick = node.type, node.status, node.affiliation or a, node.role or b,
+             if node.real_jid => JabberID node.real_jid
+                otherwise     => c
 
       node.self and node.type in ('unavailable', 'error') =>
         @left = True
@@ -133,7 +137,7 @@ MUCMessage = subclass MUCElement xmpp.XMPPMessage where
 
 
 MUCPresence = subclass MUCElement xmpp.XMPPPresence where
-  status      = ~> raise NotImplementedError
-  affiliation = ~> raise NotImplementedError  # NOTE these may not appear
-  role        = ~> raise NotImplementedError  #   in every `presence`.
-  real_jid    = ~> raise NotImplementedError
+  mucdata     = ~> head $ @findall $ './{%s}x/{%s}item' % (NS_USER, NS_USER)
+  affiliation = ~> @mucdata.get 'affiliation'
+  role        = ~> @mucdata.get 'role'
+  real_jid    = ~> @mucdata.get 'jid'
