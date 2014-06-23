@@ -161,16 +161,6 @@ Client = subclass xmlio.XMLProtocol where
   extend = module ~> not $ hasattr @ext module.init.__name__ =>
     setattr @ext module.init.__name__ $ module.init self
 
-  #: Call module destructors.
-  #:
-  #: close :: -> a
-  #:
-  close = self ->
-    for mod in dir @ext => not $ mod.startswith '__' =>
-      getattr (getattr @ext mod) '__stop__' None
-      delattr @ext mod
-    (super Client self).close!
-
   #: Handle an arbitrary stanza.
   #:
   #: _slot_node :: Element -> coroutine bool
