@@ -99,7 +99,10 @@ XMLProtocol = subclass EventSystem asyncio.streams.FlowControlMixin asyncio.Prot
         @level -= 1
         @level == 1 =>
           @log.debug 'RECV %s' $ etree.tostring node encoding: 'unicode'
-          @async $ @emit 'node' node
+          @async
+            where
+              yield from $ @emit 'node' node
+              node.getparent! !!~ -1
     (super XMLProtocol self).data_received data
 
   connection_lost = exc ~>
