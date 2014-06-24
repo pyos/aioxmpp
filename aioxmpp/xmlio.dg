@@ -1,5 +1,6 @@
 import '/asyncio'
 import '/logging'
+import '/xml/sax/saxutils/escape'
 import '/xml/sax/saxutils/quoteattr'
 
 except
@@ -28,7 +29,7 @@ Node = subclass object where
   __str__ = self ->
     '<{0}{1}>{2}</{0}>'.format @name
       ''.join $ map ((k, v) -> ' {}={}'.format k $ quoteattr v) @attrs.items!
-      ''.join $ map str @children
+      ''.join $ map (x -> if (x :: Node => str x) (otherwise => escape $ str x)) @children
 
 
 XMLWriter = subclass asyncio.StreamWriter where
