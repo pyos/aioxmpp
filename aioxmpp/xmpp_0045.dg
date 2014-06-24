@@ -140,7 +140,6 @@ init =
       yield from $ @proto.send $ Node 'presence' to: @jid.full type: 'unavailable' $
         reason and Node 'status' reason
 
-
   #: XEP-0045: Multi-User Chat
   #:
   #: http://xmpp.org/extensions/xep-0045.html
@@ -148,6 +147,19 @@ init =
   muc = self ->
     @connect 'message-groupchat' priority: 999 $ node ->
       yield from $ @emit ('message-groupchat-%s' % node.from.bare) node
+
+    #: Respond to an `iq`/`message` node. If this is a groupchat message,
+    #: send the response to the groupchat instead.
+    #:
+    #: respond :: XMPPElement (Either Node Element) -> coroutine a
+    #:
+    _respond, @respond = @respond, req node -> if
+      req :: MUCMessage =>
+        node.set 'type' req.type
+        if req.private => node.set 'to' req.from.full
+           otherwise   => node.set 'to' req.from.bare
+        yield from $ @send node
+      otherwise => yield from $ _respond req node
 
     #: Enter a groupchat.
     #:

@@ -233,9 +233,16 @@ Client = subclass xmlio.XMLProtocol where
     reply.type == 'error' => raise $ XMPPError reply
     reply
 
+  #: Create a `message`. Either use with `respond` or set `to` manually.
+  #:
+  #: message :: str (Optional str) -> Node
+  #:
+  message = body type: 'chat' ~>
+    Node 'message' type: type $ Node 'body' body
+
   #: Respond to an `iq` node.
   #:
-  #: respond :: Element (Either Node Element) -> coroutine a
+  #: respond :: XMPPElement (Either Node Element) -> coroutine a
   #:
   respond = req node ~>
     node.set 'id' $ req.id or ''
