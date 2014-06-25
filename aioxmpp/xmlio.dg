@@ -3,77 +3,32 @@ import '/logging'
 import '/xml/sax/saxutils/escape'
 import '/xml/sax/saxutils/quoteattr'
 
-except
-  err =>
-    import '/lxml/etree'
-    Element = etree._Element
-  err :: ImportError =>
-    etree = import '/xml/etree/ElementTree'
-    Element = etree.Element
-
 import 'events/EventSystem'
 
-
-Node = subclass object where
-  # ElementTree nodes tend to screw up namespace information.
-  # This node doesn't care.
-  __init__ = name *: children **: attrs ~>
-    @name     = name
-    @attrs    = attrs
-    @children = list children
-    None
-
-  get = k d: None ~> @attrs.get k d
-  set = k v       ~> @attrs !! k = v
-
-  __str__ = self ->
-    '<{0}{1}>{2}</{0}>'.format @name
-      ''.join $ map ((k, v) -> ' {}={}'.format k $ quoteattr v) @attrs.items!
-      ''.join $ map (x -> if (x :: Node => str x) (otherwise => escape $ str x)) @children
+etree = except
+  err => import '/lxml/etree' pure
+  err :: ImportError => import '/xml/etree/ElementTree' pure
 
 
-XMLWriter = subclass asyncio.StreamWriter where
-  #: A XML stanza-based protocol. The stream begins with a root node, `<stream>`,
-  #: followed by an arbitrary amount of nodes. The stream may end with `</stream>`
-  #: if it was closed gracefully.
-  #:
-  #: root :: str -- the name of the root tag, e.g. `stream:stream` in XMPP.
-  #:
-  __init__ = @root: 'stream' *: a **: k ~>
-    (super XMLWriter self).__init__ *: a **: k
-    @write $ b'<?xml version="1.0" encoding="utf-8"?>'
-    @write $ b'<' + @root.encode 'utf-8' + b'>'
-    @_closed = False
-    None
-
-  #: Send a single stanza. `yield from` the result of this method to wait until
-  #: everything is 100% sent to the other side.
-  #:
-  #: send :: (Either Node Element) -> coroutine a
-  #:
-  send = node ~>
-    data = if
-      node :: Element => etree.tostring node encoding: 'unicode'
-      node :: Node    => str node
-      otherwise       => raise $ TypeError 'not an Element/Node'
-    @_protocol.log.debug 'SEND %s' data
-    @write $ data.encode 'utf-8'
-    @drain!
-
-  #: Gracefully close the connection, optionally closing the socket.
-  #:
-  #: close :: (Optional bool) -> a
-  #:
-  close = completely: False ~>
-    not @_closed =>
-      @_closed = True
-      @write $ b'</' + (@root.split ' ' !! 0).encode 'utf-8' + b'>'
-      if completely => @transport.close!
+#: A thin wrapper around `etree.Element` that simplifies creation of nodes.
+#:
+#: Node :: str *(Either Element str) **str -> Element
+#:
+Node = name *: children **: attrs ->
+  e = etree.Element name attrs
+  x = None
+  for c in children => if
+    c :: str => if
+      x is None => e.text = (e.text or '') + c
+      otherwise => x.tail = (x.tail or '') + c
+    otherwise => e.append (x = c)
+  e
 
 
 XMLProtocol = subclass EventSystem asyncio.streams.FlowControlMixin asyncio.Protocol where
   #: A XML stanza-based protocol. Emits a `node` event for every child of a root node.
   #:
+  #: log  :: Logger
   #: loop :: EventLoop
   #: root :: str
   #:
@@ -84,41 +39,49 @@ XMLProtocol = subclass EventSystem asyncio.streams.FlowControlMixin asyncio.Prot
     (super XMLProtocol self).__init__ loop: loop
 
   connection_made = transport ~>
-    @level     = 0
-    @transport = transport
-    @writer    = XMLWriter @root transport self None @loop
-    @parser    = etree.XMLPullParser ('start', 'end')
+    @level  = 0
+    @parser = etree.XMLPullParser ('start', 'end')
+    @writer = asyncio.StreamWriter transport self None @loop
+    @writer.write $ b'<?xml version="1.0" encoding="utf-8"?>'
+    @writer.write $ b'<' + @root.encode 'utf-8' + b'>'
     (super XMLProtocol self).connection_made transport
 
   data_received = data ~>
     except err => @parser.feed data
-           err :: Exception => @writer.close True
+           err :: Exception => @close!
     for (ev, node) in @parser.read_events! => if
       ev == 'start' => @level += 1
       ev == 'end'   =>
         @level -= 1
+        @level == 0 => @close!
         @level == 1 =>
           @log.debug 'RECV %s' $ etree.tostring node encoding: 'unicode'
-          @async
-            where
-              yield from $ @emit 'node' node
-              node.getparent! !!~ -1
+          @async $ @emit 'node' node
+          # ElementTree keeps a list of all children of the root tag.
+          # This will prevent memory leaks:
+          node.getparent! !!~ -1
     (super XMLProtocol self).data_received data
 
   connection_lost = exc ~>
-    @close!
+    (super XMLProtocol self).close!  # The transport has already been closed.
     (super XMLProtocol self).connection_lost exc
 
-  #: An alias to `writer.send`.
+  #: Send a single stanza. `yield from` the result of this method to wait until
+  #: everything is 100% sent to the other side.
   #:
-  #: send :: typeof XMLWriter.send
+  #: send :: Element -> coroutine a
   #:
-  send = node ~> @writer.send node
+  send = node ~>
+    data = etree.tostring node
+    @log.debug 'SEND %s' $ data.decode 'utf-8' 'surrogateescape'
+    @writer.write data
+    @writer.drain!
 
-  #: An alias to `writer.close`.
+  #: Gracefully close the connection.
   #:
   #: close :: -> a
   #:
   close = self ->
-    @writer.close True
-    (super XMLProtocol self).close!
+    except err => @writer.write $ b'</' + (@root.split ' ' !! 0).encode 'utf-8' + b'>'
+           err :: IOError => # already closed or something
+    @writer.close!
