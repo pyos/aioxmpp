@@ -59,7 +59,7 @@ XMLProtocol = subclass EventSystem asyncio.streams.FlowControlMixin asyncio.Prot
           @async $ @emit 'node' node
           # ElementTree keeps a list of all children of the root tag.
           # This will prevent memory leaks:
-          node.getparent! !!~ -1
+          not $ node.getparent! is None => node.getparent! !!~ -1
     (super XMLProtocol self).data_received data
 
   connection_lost = exc ~>
