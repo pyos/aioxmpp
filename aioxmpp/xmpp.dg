@@ -1,15 +1,12 @@
-import '/base64'
-import '/random'
-import '/string'
 import '/asyncio'
 import '/datetime/datetime'
 
+import 'util'
 import 'xmlio'
 import 'xmlio/Node'
 
 NS_CLIENT  = 'jabber:client'
 NS_STREAM  = 'http://etherx.jabber.org/streams'
-NS_XML     = 'http://www.w3.org/XML/1998/namespace'
 NS_TLS     = 'urn:ietf:params:xml:ns:xmpp-tls'
 NS_SASL    = 'urn:ietf:params:xml:ns:xmpp-sasl'
 NS_BIND    = 'urn:ietf:params:xml:ns:xmpp-bind'
@@ -26,18 +23,16 @@ _maybe_text_of = node -> if
 XMPPError = subclass Exception where
   #: An `iq`/`presence`/`message` with a type of `error`.
   #:
-  #: node  :: Maybe ElementBase -- the node that contains the error.
-  #: error :: Maybe ElementBase -- the `{jabber:client}error` element itself.
+  #: node  :: Element -- the node that contains the error.
+  #: error :: Element -- the `{jabber:client}error` element itself.
   #:
-  __init__ = node: None ~>
+  __init__ = node ~>
     @node  = node
     @error = not $ node is None => node.findall ('./{%s}error' % NS_CLIENT)
-    @error = head $ @error or list' None
+    @error = head @error
     (super XMPPError self).__init__ node
 
-  __str__ = self -> if
-    @error is None => 'unknown-error'
-    otherwise      => (@error !! 0).tag.rsplit '}' 1 !! -1
+  __str__ = self -> (@error !! 0).tag
 
 
 XMPPElement = subclass object where
@@ -49,7 +44,7 @@ XMPPElement = subclass object where
 
   #: Convert this stanza to a different type.
   #:
-  #: as :: type -> ElementBase
+  #: as :: (type a) -> a
   #:
   as = t ~> self where @__class__ = t
 
@@ -118,8 +113,8 @@ XMPPPresence = subclass XMPPElement where
 
 JabberID = subclass object where
   __init__ = @host @user: None @resource: None ~>
-    if '@' in @host => @user, _, @host     = @host.partition '@'
-    if '/' in @host => @host, _, @resource = @host.partition '/'
+    '@' in @host => @user, _, @host     = @host.partition '@'
+    '/' in @host => @host, _, @resource = @host.partition '/'
     None
 
   bare = ~> if
@@ -134,32 +129,25 @@ JabberID = subclass object where
 
 
 Client = subclass xmlio.XMLProtocol where
-  __init__ = host loop: None ~>
-    @ext  = subclass object where
-    @self = JabberID host
-    @host = host
-    @root = ' '.join $ list'
-      'stream:stream xmlns="%s"' % NS_CLIENT
-      'xmlns:xml="%s"'           % NS_XML
-      'xmlns:stream="%s"'        % NS_STREAM
-      'version="1.0" to="%s"'    % host
-    (super Client self).__init__ root: @root loop: loop
+  __init__ = @self loop: None ~>
+    (super Client self).__init__ loop: loop root:
+      'stream:stream xmlns="%s" xmlns:stream="%s" version="1.0" to="%s"' %
+        (NS_CLIENT, NS_STREAM, @self.host)
 
-    @connect 'node'     priority: 999 @_slot_node
-    @connect 'iq'       priority: 999 @_slot_iq_request
-    @connect 'message'  priority: 999 @_slot_message
-    @connect 'presence' priority: 999 @_slot_presence
-    # These messages mean the same thing.
-    @connect 'message-chat'   priority: 999 @_slot_message_chat
-    @connect 'message-normal' priority: 999 @_slot_message_chat
+    @ext = (subclass object)! where
+    @connect 'node'     @_slot_node     999
+    @connect 'iq'       @_slot_iq       999
+    @connect 'message'  @_slot_message  999
+    @connect 'presence' @_slot_presence 999
     None
 
   #: Load an extension from a given module.
   #:
-  #: extend :: ModuleType -> a
+  #: extend :: { .init :: Client -> object } -> a
   #:
-  extend = module ~> not $ hasattr @ext module.init.__name__ =>
-    setattr @ext module.init.__name__ $ module.init self
+  extend = module ~> except
+    err             => @ext.__dict__ !! module.init.__name__
+    err :: KeyError => @ext.__dict__ !! module.init.__name__ = module.init self
 
   #: Handle an arbitrary stanza.
   #:
@@ -170,66 +158,65 @@ Client = subclass xmlio.XMLProtocol where
     if node.ismessage  => yield from $ @emit 'message'  $ node.as XMPPMessage
        node.ispresence => yield from $ @emit 'presence' $ node.as XMPPPresence
        node.isiq       => if
-         node.type == 'result' => yield from $ @emit 'response' node
-         node.type == 'error'  => yield from $ @emit 'response' node
-         otherwise             => yield from $ @emit 'iq'       node
-       node.tag == '{%s}features' % NS_STREAM => yield from $ @emit 'ready' (@features = node)
+         node.type == 'result' => yield from $ @emit ('response-%s' % node.id) node
+         node.type == 'error'  => yield from $ @emit ('response-%s' % node.id) node
+         otherwise             => yield from $ @emit 'iq' node
+       node.tag == '{%s}features' % NS_STREAM =>
+         @features = node
+         @_has_tls     = @features.findall $ './{%s}starttls'   % NS_TLS
+         @_has_bind    = @features.findall $ './{%s}bind'       % NS_BIND
+         @_has_session = @features.findall $ './{%s}session'    % NS_SESSION
+         @_has_sasl    = @features.findall $ './/{%s}mechanism' % NS_SASL
+         yield from $ @emit 'ready'
 
   #: Handle an `iq` request (by replying with an error.)
   #:
-  #: _slot_iq_request :: Element -> coroutine bool
+  #: _slot_iq :: Element -> coroutine bool
   #:
-  _slot_iq_request = asyncio.coroutine $ node ~>
+  _slot_iq = asyncio.coroutine $ node ~>
     yield from $ @respond node $ Node 'iq' type: 'error' $
       Node 'error' type: 'cancel' $ Node 'service-unavailable' xmlns: NS_STANZAS
     True
 
-  #: Dispatch a message.
+  #: Dispatch a message, first by type, then by sender, then by type and sender.
+  #:
+  #: Valid XMPP message types:
+  #:   headline  -- a single message which should not be replied to.
+  #:   normal    -- a single message which may be replied to.
+  #:   chat      -- a one-on-one conversation.
+  #:   groupchat -- a multi-user conversation.
   #:
   #: _slot_message :: Element -> coroutine bool
   #:
   _slot_message = node ~>
-    yield from $ @emit ('message-%s' % node.type) node
+    jid, t = node.from, node.type
+    task0 = @emit ('message-%s' % t) node
+    task1 = @emit (sgn1 = 'message-%s'    % jid.bare) node
+    task2 = @emit (sgn2 = 'message-%s'    % jid.full) node
+    task3 = @emit (sgn3 = 'message-%s-%s' % (t, jid.bare)) node
+    task4 = @emit (sgn4 = 'message-%s-%s' % (t, jid.full)) node
+    yield from task0 or yield from task1 or (sgn1 != sgn2 => yield from task2) or
+                        yield from task3 or (sgn3 != sgn4 => yield from task4)
 
-  #: Dispatch a one-on-one chat message.
-  #:
-  #: _slot_message_chat :: Element -> coroutine bool
-  #:
-  _slot_message_chat = node ~>
-    jid   = node.from
-    stop  = jid.bare == jid.full
-    stop |= yield from (@emit ('message-chat-%s' % jid.bare) node)
-    stop or yield from (@emit ('message-chat-%s' % jid.full) node)
-
-  #: Dispatch a presence.
+  #: Dispatch a presence by sender.
   #:
   #: _slot_presence :: Element -> coroutine a
   #:
   _slot_presence = node ~>
-    # TODO emit some authorization-related signals.
-    jid   = node.from
-    stop  = jid.bare == jid.full
-    stop |= yield from (@emit ('presence-%s' % jid.bare) node)
-    stop or yield from (@emit ('presence-%s' % jid.full) node)
+    jid = node.from
+    task1 = @emit (sgn1 = 'presence-%s' % jid.bare) node
+    task2 = @emit (sgn2 = 'presence-%s' % jid.full) node
+    yield from task1 or (sgn1 != sgn2 => yield from task2)
 
-  #: Generate a random stanza ID.
-  #:
-  #: randomid :: str
-  #:
-  randomid = ~> ''.join $ map (_ -> random.choice string.ascii_lowercase) $ range 10
-
-  #: Wait until a response to a request, which is assigned a random ID.
+  #: Wait until a response to an `iq` request, which is assigned a random ID.
   #:
   #: request :: (Either Node Element) -> coroutine Element
   #:
   request = node ~>
-    node.set 'id' (id = @randomid)
+    not $ node.tag == 'iq' => raise $ ValueError 'can only request with `iq`s'
+    not $ node.get 'id'    => node.set 'id' $ util.randstring 10
     yield from $ @send node
-
-    while True =>
-      reply = yield from $ @wait_for 'response'
-      reply.id == id => break!
-
+    reply = yield from $ @wait_for $ 'response-%s' % node.get 'id'
     reply.type == 'error' => raise $ XMPPError reply
     reply
 
@@ -237,74 +224,76 @@ Client = subclass xmlio.XMLProtocol where
   #:
   #: message :: str (Optional str) -> Node
   #:
-  message = body type: 'chat' ~>
-    Node 'message' type: type $ Node 'body' body
+  message = body type: 'chat' ~> Node 'message' type: type $ Node 'body' body
 
-  #: Respond to an `iq` node.
+  #: Respond to an `iq`/`message` node.
   #:
-  #: respond :: XMPPElement (Either Node Element) -> coroutine a
+  #: respond :: XMPPElement Element -> coroutine a
   #:
-  respond = req node ~>
-    node.set 'id' $ req.id or ''
-    node.set 'to' $ str req.from
-    yield from $ @send node
+  respond = request response ~>
+    response.set 'id' $ request.id or ''
+    response.set 'to' $ request.from.full
+    @send response
 
   #: XMPP handshake, part 1: TLS.
   #:
   #: starttls :: (Maybe SSLContext) -> coroutine a
   #:
   starttls = context ~>
-    if @features.findall $ './{%s}starttls' % NS_TLS =>
+    @_has_tls =>
       yield from $ @send $ Node 'starttls' xmlns: NS_TLS
-
       while True =>
         result = yield from $ @wait_for 'node'
         result.tag == '{%s}proceed' % NS_TLS => break!
         result.tag == '{%s}failure' % NS_TLS => raise $ ConnectionError 'TLS request denied'
 
       waiter = asyncio.Future loop: @loop
-      @loop._make_ssl_transport (@transport.get_extra_info 'socket') self context waiter
+      @loop._make_ssl_transport (@writer.transport.get_extra_info 'socket') self context waiter
       yield from waiter
       yield from $ @wait_for 'ready'
 
   #: XMPP handshake, part 2: authentication. Must be done using one of the protocols
   #: in `features`.
   #:
-  #: auth :: str str -> coroutine a
+  #: auth :: str -> coroutine a
   #:
-  auth = user password ~>
-    use_auth   = None
-    mechanisms = @features.findall $ './/{%s}mechanism' % NS_SASL
-    for x in mechanisms => if x.text in @auth.methods => use_auth = @auth.methods !! x.text
-    if use_auth  => yield from $ use_auth self user password
-       otherwise => raise $ ValueError 'no auth mechanism supported by both sides'
-    @self.user = user
-    @connection_made @transport
+  auth = password ~>
+    ms = list (where for m in @_has_sasl => m.text in @auth.methods => yield m.text)
+    ms or raise (ConnectionError 'no supported SASL method available')
+
+    gen = (@auth.methods !! last ms) self password
+    msg = Node 'auth' mechanism: (last ms) xmlns: NS_SASL $ util.base64e $ next gen
+    while not $ msg is None =>
+      yield from $ @send msg
+      while True =>
+        rsp = yield from $ @wait_for 'node'
+        msg = if
+          rsp.tag == '{%s}success'   % NS_SASL =>
+          rsp.tag == '{%s}failure'   % NS_SASL => raise $ PermissionError user
+          rsp.tag == '{%s}challenge' % NS_SASL => Node 'response' xmlns: NS_SASL $ except
+            err => util.base64e $ gen.send $ util.base64d challenge.text
+            err :: StopIteration => raise $ RuntimeError 'could not handle a challenge'
+            finally => err => yield from $ @send $ Node 'abort' xmlns: NS_SASL
+          otherwise => continue!
+        break!
+
+    @connection_made @writer.transport
     yield from $ @wait_for 'ready'
 
   auth.methods = dict'
-    #: Plain authentication: `\0username\0password` in base64.
-    #:
-    #: _ :: str str -> coroutine a
-    #:
-    'PLAIN', user password ~>
-      yield from $ @send $ Node 'auth' xmlns: NS_SASL mechanism: 'PLAIN' $ bytes.decode
-        base64.b64encode $ b'\0' + user.encode 'utf-8' + b'\0' + password.encode 'utf-8'
-        'ascii'
+    'PLAIN', password ~> yield $ '\0%s\0%s' % (@self.user, password)
+    #'DIGEST-MD5',  password ~>
+    #'SCRAM-SHA-1', password ~>
 
-      while True =>
-        result = yield from $ @wait_for 'node'
-        result.tag == '{%s}success' % NS_SASL => break!
-        result.tag == '{%s}failure' % NS_SASL => raise $ PermissionError user
-    # TODO: DIGEST-MD5, at least.
-
-  #: XMPP handshake, part 3: bind to a resource.
+  #: XMPP handshake, part 3: bind to a resource, receive an ID, start a session.
   #:
-  #: bind :: str -> coroutine a
+  #: bind :: str -> a
   #:
-  bind = resource ~>
-    @self.resource = resource
-    yield from $ @request $ Node 'iq' type: 'set' $ Node 'bind' xmlns: NS_BIND $ Node 'resource' resource
+  bind = ~>
+    not @_has_bind    => raise $ ConnectionError '`bind` not supported by server'
+    not @_has_session => raise $ ConnectionError '`session` not supported by server'
+    # XXX this returns a node that contains our JID; might want to replace `@self` with it.
+    yield from $ @request $ Node 'iq' type: 'set' $ Node 'bind' xmlns: NS_BIND $ Node 'resource' @self.resource
     yield from $ @request $ Node 'iq' type: 'set' $ Node 'session' xmlns: NS_SESSION
 
 
@@ -312,11 +301,11 @@ Client = subclass xmlio.XMLProtocol where
 #:
 #: client :: JabberID str (Optional str) (Optional int) ** -> coroutine Client
 #:
-client = jid password resource: None port: 5222 loop: None ssl: True **: k ->
+client = jid password port: 5222 loop: None ssl: True **: k ->
   loop  = loop or asyncio.get_event_loop!
-  proto = snd $ yield from $ loop.create_connection (-> Client jid.host loop) jid.host port **: k
+  proto = snd $ yield from $ loop.create_connection (-> Client jid loop) jid.host port **: k
   yield from $ proto.wait_for 'ready'
   yield from $ proto.starttls $ if (ssl :: bool => None) (otherwise => ssl)
-  yield from $ proto.auth jid.user password
-  yield from $ proto.bind $ resource or proto.randomid
+  yield from $ proto.auth password
+  yield from $ proto.bind
   proto

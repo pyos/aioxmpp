@@ -1,0 +1,11 @@
+import '/base64'
+import '/random'
+import '/string'
+
+
+randstring = ln alpha: string.ascii_lowercase -> ''.join $
+  where for _ in range ln => yield $ random.choice alpha
+
+
+base64d = data -> (base64.b64decode $ data.encode 'ascii').decode 'utf-8'
+base64e = data -> (base64.b64encode $ data.encode 'utf-8').decode 'ascii'

@@ -86,9 +86,8 @@ init =
       @waiter = None
       @left   = False
       @roster = dict' (@jid.resource, (None, None, None, None, @proto.self))
-      @proto.connect ('presence-%s'          % @jid.bare) @onpresence
-      @proto.connect ('message-chat-%s'      % @jid.bare) @onmessage
-      @proto.connect ('message-groupchat-%s' % @jid.bare) @onmessage
+      @proto.connect ('presence-%s' % @jid.bare) @onpresence
+      @proto.connect ('message-%s'  % @jid.bare) @onmessage
       None
 
     onpresence = asyncio.coroutine $ x ~> @enqueue $ x.as MUCPresence
@@ -112,15 +111,14 @@ init =
         node.online => @roster !!  node.nick = node
         node.self and not node.online =>
           @left = True
-          @proto.disconnect ('presence-%s'          % @jid.bare) @onpresence
-          @proto.disconnect ('message-chat-%s'      % @jid.bare) @onmessage
-          @proto.disconnect ('message-groupchat-%s' % @jid.bare) @onmessage
+          @proto.disconnect ('presence-%s' % @jid.bare) @onpresence
+          @proto.disconnect ('message-%s'  % @jid.bare) @onmessage
           @proto.ext.muc.entered.remove @jid.bare
 
       @queue.append node
       @waiter => @waiter.set_result True
       @waiter = None
-      False
+      True
 
     #: Fetch the next item from the queue. If there is none, wait until one is received.
     #:
@@ -145,9 +143,6 @@ init =
   #: http://xmpp.org/extensions/xep-0045.html
   #:
   muc = self ->
-    @connect 'message-groupchat' priority: 999 $ node ->
-      yield from $ @emit ('message-groupchat-%s' % node.from.bare) node
-
     #: Respond to an `iq`/`message` node. If this is a groupchat message,
     #: send the response to the groupchat instead.
     #:
@@ -173,7 +168,7 @@ init =
       node = Node 'x' xmlns: NS
       not $ password is None => node.children.append $ Node 'password' password
       not $ history  is None => node.children.append $ Node 'history' maxstanzas: (str history)
-      yield from $ @send $ Node 'presence' id: @randomid to: room.full node
+      yield from $ @send $ Node 'presence' to: room.full node
 
       task = Room self room
       # If successful, the server does not send a response. Instead,
