@@ -3,31 +3,49 @@ import '/collections'
 
 
 EventSystem = subclass object where
+  #: An object that allows starting async tasks in response to an event.
+  #:
+  #: loop  :: EventLoop
+  #: slots :: dict str [Either (a -> bool) (Future a)]
+  #: tasks :: set (Task a)
+  #:
   __init__ = loop: None ~>
     @loop  = loop or asyncio.get_event_loop!
     @slots = collections.defaultdict list
     @tasks = set!
     (super EventSystem self).__init__!
 
-  __del__   = self       -> @close!
-  __enter__ = self       -> self
-  __exit__  = self _ _ _ ->
-    @close!
-    False
-
-  #: Start a task bound to this system.
+  #: Start a task bound to this system. Tasks started with this method are guaranteed
+  #: to finish (or be cancelled) before this object becomes unusable.
   #:
-  #: async :: (coroutine a) -> Task
+  #: async :: (coroutine a) -> Task a
   #:
   async = coro ~>
     task = asyncio.async coro loop: @loop
-    task.add_done_callback $ task -> except
-      err => @tasks.remove task
-      err :: KeyError =>
-    @tasks.add task
+    task in @tasks or
+      task.add_done_callback $ task -> except
+        err => @tasks.remove task
+        err :: KeyError =>
+      @tasks.add task
     task
 
-  #: Cancel a task bound to this system after some time.
+  #: Wait until all running tasks are finished.
+  #:
+  #: join :: a
+  #:
+  join = ~> for task in @tasks => not task.done! =>
+    task._blocking = True
+    yield task
+
+  #: Stop all tasks bound to this system. This cancels all running `async` tasks
+  #: and `Future`s that are connected to events. (Someone still has to `join` them
+  #: to ensure they all finish.)
+  #:
+  #: close :: -> a
+  #:
+  close = self -> for task in @tasks => task.cancel!
+
+  #: Cancel a task if it does not finish in time.
   #:
   #: timelimit :: float (coroutine a) -> coroutine a
   #:
@@ -37,31 +55,23 @@ EventSystem = subclass object where
     except _       => yield from task
            finally => handle.cancel!
 
-  #: Stop all tasks bound to this system.
+  #: Add an event handler. It will be called after all event handlers that have
+  #: a lower `ordering`; if the handler returns `True`, no other
+  #: handlers are called for this event.
   #:
-  #: close :: -> a
+  #: connect :: str (a -> Either bool (coroutine bool)) (Optional int) -> b
   #:
-  close = self ->
-    for task in @tasks => task.cancel!
-    for name in @slots => for obj in @slots !! name => obj :: asyncio.Future => @disconnect name obj
-    @tasks.clear!
-
-  #: Add an event handler.
-  #:
-  #: connect :: str (a -> b) (Optional int) -> c
-  #:
-  connect = name callback priority: 0 ~>
-    nope = for (index, (p, _)) in enumerate (@slots !! name) => p >= priority => break!
+  connect = name callback ordering: 0 ~>
+    nope = for (index, (p, _)) in enumerate (@slots !! name) => p >= ordering => break!
     nope => index = len (@slots !! name)
-    (@slots !! name).insert index (priority, callback)
+    (@slots !! name).insert index (ordering, callback)
 
-  #: Remove a previously added event handler.
+  #: Remove a previously added event handler. No-op if this handler
+  #: is not bound to an event.
   #:
-  #: disconnect :: str (a -> b) -> c
+  #: disconnect :: str (a -> Either bool (coroutine bool)) -> c
   #:
   disconnect = name callback ~>
-    callback :: asyncio.Future => callback.cancel!
-    index = 0
     nope = for (index, (_, cb)) in enumerate (@slots !! name) => cb == callback => break!
     nope or (@slots !! name).pop index
 
@@ -72,15 +82,19 @@ EventSystem = subclass object where
   #:
   emit = name arg: None ~>
     not $ for (_, slot) in @slots !! name =>
-      if slot :: asyncio.Future => slot.set_result arg
-         yield from $ slot arg => break!
+      res = slot arg
+      res :: asyncio.Future or asyncio.iscoroutine res => res = yield from res
+      res => break!
 
   #: Wait until an event is fired.
   #:
   #: wait_for :: str (Optional int) -> coroutine a
   #:
-  wait_for = name priority: 0 ~>
+  wait_for = name ordering: 0 ~>
     waiter = asyncio.Future loop: @loop
-    @connect name waiter priority
+    @tasks.add waiter
+    @connect name waiter.set_result ordering
     except _       => yield from waiter
-           finally => @disconnect name waiter
+           finally =>
+             @disconnect name waiter.set_result
+             @tasks.remove waiter
