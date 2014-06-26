@@ -269,7 +269,7 @@ Client = subclass xmlio.XMLProtocol where
         rsp = yield from $ @wait_for 'node'
         msg = if
           rsp.tag == '{%s}success'   % NS_SASL =>
-          rsp.tag == '{%s}failure'   % NS_SASL => raise $ PermissionError user
+          rsp.tag == '{%s}failure'   % NS_SASL => raise $ PermissionError @self.user
           rsp.tag == '{%s}challenge' % NS_SASL => Node 'response' xmlns: NS_SASL $ except
             err => util.base64e $ gen.send $ util.base64d challenge.text
             err :: StopIteration => raise $ RuntimeError 'could not handle a challenge'
@@ -290,6 +290,7 @@ Client = subclass xmlio.XMLProtocol where
   #: bind :: str -> a
   #:
   bind = ~>
+    @self.resource = @self.resource or util.randstring 10
     not @_has_bind    => raise $ ConnectionError '`bind` not supported by server'
     not @_has_session => raise $ ConnectionError '`session` not supported by server'
     # XXX this returns a node that contains our JID; might want to replace `@self` with it.
