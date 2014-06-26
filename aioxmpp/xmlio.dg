@@ -1,5 +1,7 @@
 import '/asyncio'
 import '/logging'
+import '/collections'
+import '/xml/parsers/expat'
 import '/xml/sax/saxutils/escape'
 import '/xml/sax/saxutils/quoteattr'
 
@@ -39,28 +41,50 @@ XMLProtocol = subclass EventSystem asyncio.streams.FlowControlMixin asyncio.Prot
     (super XMLProtocol self).__init__ loop: loop
 
   connection_made = transport ~>
-    @level  = 0
-    @parser = etree.XMLPullParser ('start', 'end')
+    @_level = 0
+    @_elems = collections.deque!
+    @parser = expat.ParserCreate None '}'
+    @parser.StartElementHandler  = @_onstart
+    @parser.CharacterDataHandler = @_oncdata
+    @parser.EndElementHandler    = @_onend
     @writer = asyncio.StreamWriter transport self None @loop
     @writer.write $ b'<?xml version="1.0" encoding="utf-8"?>'
     @writer.write $ b'<' + @root.encode 'utf-8' + b'>'
     (super XMLProtocol self).connection_made transport
 
   data_received = data ~>
-    except err => @parser.feed data
-           err :: Exception => @close!
-    for (ev, node) in @parser.read_events! => if
-      ev == 'start' => @level += 1
-      ev == 'end'   =>
-        @level -= 1
-        @level == 0 => @close!
-        @level == 1 =>
-          @log.debug 'RECV %s' $ etree.tostring node encoding: 'unicode'
-          @async $ @emit 'node' node
-          # ElementTree keeps a list of all children of the root tag.
-          # This will prevent memory leaks:
-          not $ node.getparent! is None => node.getparent! !!~ -1
+    except err => @parser.Parse data
+           err :: Exception =>
+             @log.error 'XML parsing error' exc_info: True
+             @close!
     (super XMLProtocol self).data_received data
+
+  _onstart = name attrs ~>
+    @_level += 1
+    @_level > 1 => @_elems.append $ etree.Element (@_fix1 name) $ dict $ map @_fix2 attrs.items!
+
+  _fix1 = n ~> if
+    '}' in n  => '{' + n
+    otherwise => n
+
+  _fix2 = (k, v) ~> if
+    '}' in k  => '{' + k, v
+    otherwise => k, v
+
+  _onend = name ~>
+    node = @_elems.pop!
+    @_level -= 1
+    if @_level == 0 => close!
+       @_level >  1 => (@_elems !! -1).append node
+       @_level == 1 =>
+         @log.debug 'RECV %s' $ etree.tostring node encoding: 'unicode'
+         @async $ @emit 'node' node
+
+  _oncdata = data ~>
+    e = @_elems !! -1
+    x = if (len e => e !! -1) (otherwise => None)
+    if x is None => e.text = (e.text or '') + data
+       otherwise => x.tail = (x.tail or '') + data
 
   connection_lost = exc ~>
     (super XMLProtocol self).close!  # The transport has already been closed.
