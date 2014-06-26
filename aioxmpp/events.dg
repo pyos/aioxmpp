@@ -33,9 +33,10 @@ EventSystem = subclass object where
   #:
   #: join :: a
   #:
-  join = ~> for task in @tasks => not task.done! =>
+  join = ~> for task in list @tasks => not task.done! =>
     task._blocking = True
-    yield task
+    except err => yield task
+           err :: asyncio.CancelledError =>
 
   #: Stop all tasks bound to this system. This cancels all running `async` tasks
   #: and `Future`s that are connected to events. (Someone still has to `join` them
