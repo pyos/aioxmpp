@@ -93,12 +93,6 @@ init =
     onpresence = asyncio.coroutine $ x ~> @enqueue $ x.as MUCPresence
     onmessage  = asyncio.coroutine $ x ~> @enqueue $ x.as MUCMessage
 
-    #: Whether waiting on this room is of any use.
-    #:
-    #: ok :: bool
-    #:
-    ok = ~> bool @queue or not @left
-
     #: Put the node onto the event queue and wake up those who wait for it.
     #:
     #: enqueue :: MUCElement -> bool
@@ -125,7 +119,11 @@ init =
     #: __iter__ :: -> coroutine MUCNode
     #:
     __iter__ = self ->
-      while not @queue => yield from $ @waiter or (@waiter = asyncio.Future loop: @proto.loop)
+      while not @queue =>
+        @left   => raise $ CancelledError
+        @waiter => raise $ RuntimeError 'already waiting on this room'
+        @waiter = asyncio.Future loop: @proto.loop
+        yield from @waiter
       resp = @queue.popleft!
       resp :: MUCPresence and resp.type == 'error' => raise $ XMPPError resp
       resp
