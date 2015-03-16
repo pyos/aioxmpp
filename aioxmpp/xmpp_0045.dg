@@ -164,8 +164,8 @@ init =
       _f.entered.add room.bare
 
       node = Node 'x' xmlns: NS
-      not $ password is None => node.children.append $ Node 'password' password
-      not $ history  is None => node.children.append $ Node 'history' maxstanzas: (str history)
+      not $ password is None => node.append $ Node 'password' password
+      not $ history  is None => node.append $ Node 'history' maxstanzas: (str history)
       yield from $ @send $ Node 'presence' to: room.full node
 
       task = Room self room
