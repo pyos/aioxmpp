@@ -27,15 +27,6 @@ Object = subclass dict where
       otherwise => tp v
     for k in keys => self !! k = cv (getattr (type self) k None) $ self !! k
 
-  #: Copy all fields from another map of same type.
-  #:
-  #: update :: dict -> a
-  #:
-  update = other ~>
-    dict.update self other
-    fixtypes    self other
-
-
 
 File = subclass Object where
   # Note that only type overrides are listed here. No reason to declare
@@ -71,7 +62,7 @@ Event = subclass Object where
 
 
 Event.ChannelNew      = subclass Event where channel = Channel
-Event.BotNew          = subclass Event where bot = Bot
+Event.BotNew          = subclass Event where bot  = Bot
 Event.UserNew         = subclass Event where user = User
 Event.UserChange      = subclass Event where user = User
 Event.UserPresence    = subclass Event where user = Object.ID
