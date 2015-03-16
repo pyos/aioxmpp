@@ -1,0 +1,112 @@
+Object = subclass dict where
+  ID = object!
+
+  #: Given a `dict str object`, allow attribute-like access.
+  #:
+  #: See other structures for available fields.
+  #:
+  __init__ = slack *: args **: kwargs ~>
+    dict.__init__ self *: args **: kwargs
+    self.__dict__ = self
+    self._slack = slack
+    fixtypes self self.__dict__
+    for k in set (dir $ type self) - set (dir Object) - @__dict__.keys! =>
+      self !! k = None
+    None
+
+  #: Reinitialize some fields with objects of proper types.
+  #:
+  #: fixtypes :: (iter str) -> a
+  #:
+  fixtypes = keys ~>
+    cv = tp v -> if
+      tp is None => v
+      tp is ID   => @_slack.objects.get v
+      tp :: list => list $ map (v -> cv (head tp) v) v
+      tp :: type and tp `issubclass` Object => tp @_slack v
+      otherwise => tp v
+    for k in keys => self !! k = cv (getattr (type self) k None) $ self !! k
+
+  #: Copy all fields from another map of same type.
+  #:
+  #: update :: dict -> a
+  #:
+  update = other ~>
+    dict.update self other
+    fixtypes    self other
+
+
+
+File = subclass Object where
+  # Note that only type overrides are listed here. No reason to declare
+  # strings, numbers, and booleans - they're supported by JSON.
+  user      = Object.ID
+  groups    = [Object.ID]
+  channels  = [Object.ID]
+
+
+Profile = subclass Object where bot     = Object.ID
+Bot     = subclass Object where icons   = Object
+User    = subclass Object where profile = Profile
+Team    = subclass Object where icon    = Object
+Topic   = subclass Object where creator = Object.ID
+IM      = subclass Object where
+Channel = subclass Object where
+  topic   = Topic
+  purpose = Topic
+  creator = Object.ID
+  members = [Object.ID]
+
+
+Error = subclass Object where
+Event = subclass Object where
+  error = Error
+
+  #: Create an `Event` of an appropriate type for this JSON event.
+  #:
+  #: __new__ :: Slack (dict str object) -> Event
+  #:
+  __new__ = slack ob ~>
+    Object.__new__ $ @by_type.get (ob.get 'subtype' $ ob.get 'type' '') self
+
+
+Event.ChannelNew      = subclass Event where channel = Channel
+Event.BotNew          = subclass Event where bot = Bot
+Event.UserNew         = subclass Event where user = User
+Event.UserChange      = subclass Event where user = User
+Event.UserPresence    = subclass Event where user = Object.ID
+Event.UserTyping      = subclass Event where user = channel = Object.ID
+Event.Message         = subclass Event where user = channel = Object.ID
+Event.Message.Simple  = subclass Event.Message where
+Event.Message.Me      = subclass Event.Message where
+Event.Message.Bot     = subclass Event.Message where bot_id  = Object.ID
+Event.Message.Changed = subclass Event.Message where message = Event
+Event.Message.Deleted = subclass Event.Message where
+Event.Message.Join    = subclass Event.Message where inviter = Object.ID
+Event.Message.Leave   = subclass Event.Message where
+Event.Message.Topic   = subclass Event.Message where
+Event.Message.Purpose = subclass Event.Message where
+Event.Message.Rename  = subclass Event.Message where
+Event.Message.File    = subclass Event.Message where file = File
+Event.Message.FileRe  = subclass Event.Message where file = File
+
+
+Event.by_type = dict'
+  'message',         Event.Message.Simple
+  'bot_message',     Event.Message.Bot
+  'me_message',      Event.Message.Me
+  'message_changed', Event.Message.Changed
+  'message_deleted', Event.Message.Deleted
+  'channel_created', Event.ChannelNew
+  'channel_join',    Event.Message.Join
+  'channel_leave',   Event.Message.Leave
+  'channel_topic',   Event.Message.Topic
+  'channel_purpose', Event.Message.Purpose
+  'channel_name',    Event.Message.Rename
+  'file_share',      Event.Message.File
+  'file_mention',    Event.Message.FileRe
+  'user_typing',     Event.UserTyping
+  'user_change',     Event.UserChange
+  'presence_change', Event.UserPresence
+  'team_join',       Event.UserNew
+  'bot_added',       Event.BotNew

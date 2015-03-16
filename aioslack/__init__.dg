@@ -1,0 +1,111 @@
+import '/json'
+import '/asyncio'
+import '/aiohttp'
+import '/logging'
+import '/websockets'
+
+import 'events'
+import 'struct'
+import 'struct/IM'   # These are useful to outside code,
+import 'struct/Bot'  # so let's make access more convenient.
+import 'struct/User'
+import 'struct/Event'
+import 'struct/Channel'
+
+
+Slack = subclass events.EventSystem where
+  __init__ = initial socket ~>
+    @log = logging.getLogger 'slack.client'
+    @count   = 1
+    @socket  = socket
+    @objects = dict!
+    @objects !! (initial !! 'team' !! 'id') = @team = struct.Team self $ initial !! 'team'
+    for ob in initial !! 'bots'     => @objects !! (ob !! 'id') = Bot     self ob
+    for ob in initial !! 'users'    => @objects !! (ob !! 'id') = User    self ob
+    for ob in initial !! 'ims'      => @objects !! (ob !! 'id') = IM      self ob
+    for ob in initial !! 'channels' => @objects !! (ob !! 'id') = Channel self ob
+    @self = @objects !! (initial !! 'self' !! 'id')
+    events.EventSystem.__init__ self @socket._loop
+
+  #: Find an object by type and name.
+  #:
+  #: find :: type str -> Maybe Object
+  #:
+  find = t name ~> next (filter (x -> x :: t and x.get 'name' == name) @objects.values!) None
+
+  #: Read the next event.
+  #:
+  #: yield from :: Slack -> Event
+  #:
+  __iter__ = self ->
+    msg = yield from @socket.recv!
+    if msg :: str => Event self $ json.loads msg
+       otherwise  => Event self $ json.loads $ msg.decode 'utf-8'
+
+  #: Dispatch all nodes through the event system as `event` events.
+  #:
+  #: dispatch :: coroutine a
+  #:
+  dispatch = ~>
+    while True =>
+      ev = yield from self
+
+      if ev :: Event.Message.Join    => ev.channel.members.append ev.user
+         ev :: Event.Message.Leave   => ev.channel.members.remove ev.user
+         ev :: Event.Message.Topic   => ev.channel.topic.value   = ev.topic
+         ev :: Event.Message.Purpose => ev.channel.purpose.value = ev.purpose
+         ev :: Event.Message.Rename  => ev.channel.name = ev.name
+         ev :: Event.UserPresence    => ev.user.presence = ev.presence
+         ev :: Event.BotNew          => @objects !! ev.bot.id = ev.bot
+         ev :: Event.ChannelNew      => @objects !! ev.channel.id = ev.channel
+         ev :: Event.UserNew         => @objects !! ev.user.id = ev.user
+         ev :: Event.UserChange =>
+           old = @objects.get ev.user.id ev.user
+           old.update ev.user
+           ev.user = old
+
+      if 'reply_to' in ev => @async $ @emit ev.reply_to ev
+         otherwise        => @async $ @emit 'event' ev
+
+  #: JSON-encode stuff, then send as text. `yield from` to flush.
+  #:
+  #: send :: object -> coroutine a
+  #:
+  send = object ~> @socket.send $ json.dumps object
+
+  #: Send a ping, wait for a pong. Requires `dispatch` to be running.
+  #:
+  #: ping :: coroutine a
+  #:
+  ping = ~>
+    eid = @count += 1
+    yield from $ @send $ dict id: eid type: 'ping'
+    yield from $ @wait_for eid
+
+  #: Send a message to a channel. Requires `dispatch` to be running.
+  #:
+  #: respond :: Channel str -> coroutine a
+  #:
+  respond = channel text ~>
+    eid = @count += 1
+    yield from $ @send $ dict id: eid type: 'message' channel: channel.id text: text
+    yield from $ @wait_for eid
+
+  #: Start an RTM Slack session.
+  #:
+  #: start :: str -> Slack
+  #:
+  start = classmethod $ cls token loop: None ->
+    url  = 'https://slack.com/api/rtm.start?token=' + token
+    data = yield from $ aiohttp.request 'GET' url loop: loop
+    data = yield from $ data.read!
+    data = json.loads $ data.decode 'utf-8'
+    data !! 'ok' is False => raise $ ConnectionError $ data.get 'error' '?'
+
+    conn = cls data $ yield from $ websockets.connect loop: loop $ data !! 'url'
+    node = yield from conn  # must be `{"type": "hello"}`
+    node.error => raise $ ConnectionError $ node.error.msg
+    conn
+
+
+start = Slack.start
