@@ -45,7 +45,7 @@ File = subclass Object where
   channels  = [Object.ID]
 
 
-Profile = subclass Object where bot     = Object.ID
+Profile = subclass Object where bot_id  = Object.ID
 Bot     = subclass Object where icons   = Object
 User    = subclass Object where profile = Profile
 Team    = subclass Object where icon    = Object
