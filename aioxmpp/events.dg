@@ -39,12 +39,14 @@ EventSystem = subclass object where
            err :: asyncio.CancelledError =>
 
   #: Stop all tasks bound to this system. This cancels all running `async` tasks
-  #: and `Future`s that are connected to events. (Someone still has to `join` them
-  #: to ensure they all finish.)
+  #: and `Future`s that are connected to events. `yield from` to wait until they
+  #: finish, too.
   #:
-  #: close :: -> a
+  #: close :: -> coroutine a
   #:
-  close = self -> for task in @tasks => task.cancel!
+  close = self ->
+    for task in @tasks => task.cancel!
+    @join
 
   #: Cancel a task if it does not finish in time.
   #:
@@ -83,7 +85,9 @@ EventSystem = subclass object where
   #:
   emit = name arg: None ~>
     not $ for (_, slot) in @slots !! name =>
-      res = slot arg
+      res = except
+        err => slot arg
+        err :: asyncio.futures.InvalidStateError => False
       res :: asyncio.Future or asyncio.iscoroutine res => res = yield from res
       res => break!
 
