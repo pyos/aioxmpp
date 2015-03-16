@@ -4,7 +4,7 @@ import '/aiohttp'
 import '/logging'
 import '/websockets'
 
-import 'events'
+import '../events'
 import 'struct'
 import 'struct/IM'   # These are useful to outside code,
 import 'struct/Bot'  # so let's make access more convenient.

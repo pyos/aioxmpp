@@ -3,7 +3,7 @@ import '/logging'
 import '/xml/sax/saxutils/escape'
 import '/xml/sax/saxutils/quoteattr'
 
-import 'events/EventSystem'
+import '../events/EventSystem'
 
 etree = except
   err => import '/lxml/etree' pure

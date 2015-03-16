@@ -22,11 +22,8 @@ EventSystem = subclass object where
   #:
   async = coro ~>
     task = asyncio.async coro loop: @loop
-    task in @tasks or
-      task.add_done_callback $ task -> except
-        err => @tasks.remove task
-        err :: KeyError =>
-      @tasks.add task
+    task.add_done_callback @tasks.discard
+    @tasks.add task
     task
 
   #: Wait until all running tasks are finished.
