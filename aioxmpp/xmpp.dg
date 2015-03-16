@@ -1,3 +1,4 @@
+import '/io'
 import '/asyncio'
 import '/datetime/datetime'
 
@@ -248,6 +249,8 @@ Client = subclass xmlio.XMLProtocol where
         result.tag == '{%s}failure' % NS_TLS => raise $ ConnectionError 'TLS request denied'
 
       waiter = asyncio.Future loop: @loop
+      @writer.transport._sock = io.BytesIO!
+      @writer.transport._protocol_connected = False
       @loop._make_ssl_transport (@writer.transport.get_extra_info 'socket') self context waiter
       yield from waiter
       yield from $ @wait_for 'ready'
@@ -263,19 +266,18 @@ Client = subclass xmlio.XMLProtocol where
 
     gen = (@auth.methods !! last ms) self password
     msg = Node 'auth' mechanism: (last ms) xmlns: NS_SASL $ util.base64e $ next gen
-    while not $ msg is None =>
+    while not $ msg is True =>
       yield from $ @send msg
-      while True =>
+      msg = None
+      while msg is None =>
         rsp = yield from $ @wait_for 'node'
         msg = if
-          rsp.tag == '{%s}success'   % NS_SASL =>
+          rsp.tag == '{%s}success'   % NS_SASL => True
           rsp.tag == '{%s}failure'   % NS_SASL => raise $ PermissionError @self.user
           rsp.tag == '{%s}challenge' % NS_SASL => Node 'response' xmlns: NS_SASL $ except
             err => util.base64e $ gen.send $ util.base64d challenge.text
             err :: StopIteration => raise $ RuntimeError 'could not handle a challenge'
             finally => err => yield from $ @send $ Node 'abort' xmlns: NS_SASL
-          otherwise => continue!
-        break!
 
     @connection_made @writer.transport
     yield from $ @wait_for 'ready'
