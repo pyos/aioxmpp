@@ -3,6 +3,7 @@ import '/asyncio'
 import '/aiohttp'
 import '/logging'
 import '/websockets'
+import '/urllib/parse' qualified
 
 import '../events'
 import 'struct'
@@ -14,9 +15,11 @@ import 'struct/Channel'
 
 
 Slack = subclass events.EventSystem where
-  __init__ = initial socket ~>
+  __init__ = initial token socket ~>
     @log = logging.getLogger 'slack.client'
+    @_pool   = aiohttp.TCPConnector!
     @count   = 1
+    @token   = token
     @socket  = socket
     @objects = dict!
     @objects !! (initial !! 'team' !! 'id') = @team = struct.Team self $ initial !! 'team'
@@ -91,6 +94,21 @@ Slack = subclass events.EventSystem where
     yield from $ @send $ dict id: eid type: 'message' channel: channel.id text: text
     yield from $ @wait_for eid
 
+  #: Send a message through the Slack Web API. Supports more parameters!
+  #:
+  #: respondRPC :: Channel str ** -> coroutine a
+  #:
+  respondRPC = channel text **: args ~>
+    args !! 'text'    = text
+    args !! 'token'   = @token
+    args !! 'channel' = channel.id
+    url  = 'https://slack.com/api/chat.postMessage?' + urllib.parse.urlencode args
+    data = yield from $ aiohttp.request 'GET' url loop: @loop connector: @_pool
+    data = yield from $ data.read!
+    data = json.loads $ data.decode 'utf-8'
+    data !! 'ok' is False => raise $ ConnectionError $ data.get 'error' '?'
+    data
+
   #: Start an RTM Slack session.
   #:
   #: start :: str -> Slack
@@ -102,7 +120,7 @@ Slack = subclass events.EventSystem where
     data = json.loads $ data.decode 'utf-8'
     data !! 'ok' is False => raise $ ConnectionError $ data.get 'error' '?'
 
-    conn = cls data $ yield from $ websockets.connect loop: loop $ data !! 'url'
+    conn = cls data token $ yield from $ websockets.connect loop: loop $ data !! 'url'
     node = yield from conn  # must be `{"type": "hello"}`
     node.error => raise $ ConnectionError $ node.error.msg
     conn
