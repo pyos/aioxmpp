@@ -88,10 +88,20 @@ init =
       @roster = dict' (@jid.resource, (None, None, None, None, @proto.self))
       @proto.connect ('presence-%s' % @jid.bare) @onpresence
       @proto.connect ('message-%s'  % @jid.bare) @onmessage
+      @proto.connect 'disconnect'                @onexit
       None
 
     onpresence = asyncio.coroutine $ x ~> @enqueue $ x.as MUCPresence
     onmessage  = asyncio.coroutine $ x ~> @enqueue $ x.as MUCMessage
+    onexit = x ~>
+      @left = True
+      @proto.disconnect ('presence-%s' % @jid.bare) @onpresence
+      @proto.disconnect ('message-%s'  % @jid.bare) @onmessage
+      @proto.disconnect 'disconnect'                @onexit
+      @proto.ext.muc.entered.remove @jid.bare
+      x is None =>
+        @waiter => @waiter.cancel!
+        @waiter = None
 
     #: Put the node onto the event queue and wake up those who wait for it.
     #:
@@ -103,11 +113,7 @@ init =
       node :: MUCPresence =>
         node.known  => @roster !!~ node.nick
         node.online => @roster !!  node.nick = node
-        node.self and not node.online =>
-          @left = True
-          @proto.disconnect ('presence-%s' % @jid.bare) @onpresence
-          @proto.disconnect ('message-%s'  % @jid.bare) @onmessage
-          @proto.ext.muc.entered.remove @jid.bare
+        node.self and not node.online => @onexit node
 
       @queue.append node
       @waiter => @waiter.set_result True
