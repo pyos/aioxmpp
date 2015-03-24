@@ -142,6 +142,10 @@ Client = subclass xmlio.XMLProtocol where
     @connect 'presence' @_slot_presence 999
     None
 
+  connection_lost = exc ~>
+    (super Client self).connection_lost exc
+    @async $ @emit 'disconnect'
+
   #: Load an extension from a given module.
   #:
   #: extend :: { .init :: Client -> object } -> a
