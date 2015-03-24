@@ -1,4 +1,5 @@
 import '/json'
+import '/time'
 import '/asyncio'
 import '/aiohttp'
 import '/logging'
@@ -99,6 +100,7 @@ Slack = subclass events.EventSystem where
   #: respondRPC :: Channel str ** -> coroutine a
   #:
   respondRPC = channel text **: args ~>
+    start = time.time!
     args !! 'text'    = text
     args !! 'token'   = @token
     args !! 'channel' = channel.id
@@ -107,6 +109,9 @@ Slack = subclass events.EventSystem where
     data = yield from $ data.read!
     data = json.loads $ data.decode 'utf-8'
     data !! 'ok' is False => raise $ ConnectionError $ data.get 'error' '?'
+    # Enforce a 1-per-second rate limit.
+    delta = time.time! - start
+    delta < 1 => yield from $ asyncio.sleep (1 - delta) loop: @loop
     data
 
   #: Start an RTM Slack session.
