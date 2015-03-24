@@ -36,6 +36,7 @@ XMLProtocol = subclass EventSystem asyncio.streams.FlowControlMixin asyncio.Prot
     @loop  = loop or asyncio.get_event_loop!
     @root  = root
     @log   = logging.getLogger 'asyncio.xml'
+    @_done = False
     (super XMLProtocol self).__init__ loop: loop
 
   connection_made = transport ~>
@@ -65,6 +66,7 @@ XMLProtocol = subclass EventSystem asyncio.streams.FlowControlMixin asyncio.Prot
     (super XMLProtocol self).data_received data
 
   connection_lost = exc ~>
+    @_done = True
     (super XMLProtocol self).close!  # The transport has already been closed.
     (super XMLProtocol self).connection_lost exc
 
@@ -84,6 +86,7 @@ XMLProtocol = subclass EventSystem asyncio.streams.FlowControlMixin asyncio.Prot
   #: close :: -> a
   #:
   close = self ->
-    except err => @writer.write $ b'</' + (@root.split ' ' !! 0).encode 'utf-8' + b'>'
-           err :: IOError => # already closed or something
-    @writer.close!
+    not @_done =>
+      except err => @writer.write $ b'</' + (@root.split ' ' !! 0).encode 'utf-8' + b'>'
+             err :: IOError => # already closed or something
+      @writer.close!
