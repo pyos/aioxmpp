@@ -43,8 +43,9 @@ Slack = subclass events.EventSystem where
   #:
   __iter__ = self ->
     msg = yield from @socket.recv!
-    if msg :: str => Event self $ json.loads msg
-       otherwise  => Event self $ json.loads $ msg.decode 'utf-8'
+    if msg is None => raise ConnectionError
+       msg :: str  => Event self $ json.loads msg
+       otherwise   => Event self $ json.loads $ msg.decode 'utf-8'
 
   #: Dispatch all nodes through the event system as `event` events.
   #:
