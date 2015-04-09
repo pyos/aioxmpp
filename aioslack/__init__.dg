@@ -96,6 +96,20 @@ Slack = subclass events.EventSystem where
     yield from $ @send $ dict id: eid type: 'message' channel: channel.id text: text
     yield from $ @wait_for eid
 
+  #: Send a Web API request.
+  #:
+  #: webapi :: str ** -> coroutine (dict str object)
+  #:
+  webapi = method **: args ~>
+    args !! 'token' = @token
+    url  = 'https://slack.com/api/' + method + '?' + urllib.parse.urlencode args
+    data = yield from $ aiohttp.request 'GET' url loop: @loop connector: @_pool
+    data.status != 200 => @log.error 'web api returned code %s' data.status
+    data = yield from $ data.read!
+    data = json.loads $ data.decode 'utf-8'
+    data !! 'ok' is False => raise $ ConnectionError $ data.get 'error' '?'
+    data
+
   #: Send a message through the Slack Web API. Supports more parameters!
   #:
   #: respondRPC :: Channel str ** -> coroutine a
@@ -103,18 +117,22 @@ Slack = subclass events.EventSystem where
   respondRPC = channel text **: args ~>
     start = time.time!
     args !! 'text'    = text
-    args !! 'token'   = @token
     args !! 'channel' = channel.id
-    url  = 'https://slack.com/api/chat.postMessage?' + urllib.parse.urlencode args
-    data = yield from $ aiohttp.request 'GET' url loop: @loop connector: @_pool
-    data.status != 200 => @log.error 'web api returned code %s' data.status
-    data = yield from $ data.read!
-    data = json.loads $ data.decode 'utf-8'
-    data !! 'ok' is False => raise $ ConnectionError $ data.get 'error' '?'
+    data = yield from $ @webapi 'chat.postMessage' **: args
     # Enforce a 1-per-second rate limit.
     delta = time.time! - start
     delta < 1 => yield from $ asyncio.sleep (1 - delta) loop: @loop
     data
+
+  #: Update the topic of a channel.
+  #:
+  #: set_topic :: Channel str -> coroutine a
+  #:
+  set_topic = channel topic ~>
+    args = {}
+    args !! 'channel' = channel.id
+    args !! 'topic'   = topic
+    yield from $ @webapi 'channels.setTopic' **: args
 
   #: Start an RTM Slack session.
   #:
