@@ -102,8 +102,8 @@ Slack = subclass events.EventSystem where
   #:
   webapi = method **: args ~>
     args !! 'token' = @token
-    url  = 'https://slack.com/api/' + method + '?' + urllib.parse.urlencode args
-    data = yield from $ aiohttp.request 'GET' url loop: @loop connector: @_pool
+    url  = 'https://slack.com/api/' + method
+    data = yield from $ aiohttp.request 'POST' url loop: @loop connector: @_pool data: args
     data.status != 200 => @log.error 'web api returned code %s' data.status
     data = yield from $ data.read!
     data = json.loads $ data.decode 'utf-8'
