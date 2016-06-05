@@ -231,6 +231,17 @@ Client = subclass xmlio.XMLProtocol where
   #:
   message = body type: 'chat' ~> Node 'message' type: type $ Node 'body' body
 
+  #: Set the presence (active/away/chat/dnd) of this user.
+  #:
+  #: set_status :: str (Optional str) -> coroutine a
+  #:
+  set_status = k visible_to: None ~>
+    node = if k == 'active' => Node 'presence'
+              otherwise     => Node 'presence' $ Node 'show' k
+    if visible_to :: JabberID => node.set 'to' visible_to.full
+       visible_to :: str      => node.set 'to' visible_to
+    @send node
+
   #: Respond to an `iq`/`message` node.
   #:
   #: respond :: XMPPElement Element -> coroutine a
